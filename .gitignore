@@ -1,0 +1,35 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environment (regenerate with `uv sync`)
+.venv/
+
+# Secrets — NEVER commit
+.env
+.env.*
+
+# Local data store
+data/
+*.db
+*.sqlite*
+
+# Terraform — state contains secrets, .terraform/ is local plugin cache
+.terraform/
+*.tfstate*
+*.tfvars
+*.auto.tfvars
+
+# IDE / editor
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
