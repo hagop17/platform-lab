@@ -4,6 +4,10 @@ services:
     ports:
       - "8000:8000"   # FastAPI app
       - "9464:9464"   # OTel Prometheus metrics endpoint
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-groq}
 
   prometheus:
     image: prom/prometheus:latest
