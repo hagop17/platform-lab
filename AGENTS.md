@@ -1,5 +1,7 @@
 # fastapi-demo
 
+> See `CLAUDE.md` for the current, up-to-date guidance — kept here as a pointer for tools that look for `AGENTS.md` specifically.
+
 FastAPI Tax-Engine Prototype.
 
 ## Toolchain

@@ -23,6 +23,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from prometheus_client import start_http_server
 
+from metrics_analysis import analyze_metrics
+
 logging.basicConfig(level=logging.INFO)
 
 # A Resource identifies this service in whatever backend receives the data
@@ -82,3 +84,8 @@ def read_root() -> dict[str, str]:
 @app.get("/items/{item_id}")
 def read_item(item_id: int, q: str | None = None) -> dict:
     return {"item_id": item_id, "q": q}
+
+
+@app.get("/api/v1/analyze")
+def analyze(query: str = "up", minutes: int = 15):
+    return {"analysis": analyze_metrics(query, minutes)}
