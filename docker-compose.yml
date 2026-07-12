@@ -8,6 +8,14 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER:-groq}
+      - TPR_RAG_DATA_DIR=/root/.tpr-rag/chroma_data
+    volumes:
+      # Shares the host's already-ingested ChromaDB index (run rag/ingest.py
+      # on the host, not inside the container, to avoid root-owned files —
+      # see tpr_rag_spec.md). The container only reads it; the app process
+      # still needs a restart after any re-ingestion (same rule as running
+      # outside Docker).
+      - ${HOME}/.tpr-rag/chroma_data:/root/.tpr-rag/chroma_data
 
   prometheus:
     image: prom/prometheus:latest
