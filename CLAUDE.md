@@ -16,18 +16,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-Flat layout, no `src/`/`app/` package — two top-level modules:
+Flat layout, no `src/`/`app/` package — top-level modules plus a `rag/` package:
 
-- **`main.py`** — FastAPI app entrypoint. Wires up OpenTelemetry (traces to console via `ConsoleSpanExporter`, metrics to Prometheus pull-model via `PrometheusMetricReader` on port `9464`), then defines routes (`/`, `/health`, `/work`, `/items/{item_id}`, `/api/v1/analyze`).
-- **`metrics_analysis.py`** — implements `/api/v1/analyze`: queries Prometheus's `query_range` API for a metric window, formats the time series into compact text, then sends that text to an LLM for anomaly/trend analysis.
+- **`main.py`** — FastAPI app entrypoint. Wires up OpenTelemetry (traces to console via `ConsoleSpanExporter`, metrics to Prometheus pull-model via `PrometheusMetricReader` on port `9464`), mounts `rag_router`, then defines routes (`/`, `/health`, `/work`, `/items/{item_id}`, `/api/v1/analyze`).
+- **`metrics_analysis.py`** — implements `/api/v1/analyze`: queries Prometheus's `query_range` API for a metric window, formats the time series into compact text, then calls `llm_providers.complete()` for anomaly/trend analysis.
+- **`llm_providers.py`** — the shared LLM dispatch layer (see below). Used by both `metrics_analysis.py` and `rag/`.
+- **`rag/`** — tangible-property-regulations RAG demo. `rag/ingest.py` scrapes/chunks CFR + IRS FAQ pages into a persistent ChromaDB collection; `rag/tpr_rag.py` embeds a question, retrieves matching chunks, and builds the grounded prompt; `rag/router.py` exposes `/api/v1/repair-tax-impact` (RAG-grounded) and `/api/v1/repair-tax-impact-no-rag` (same question sent straight to the LLM, for comparison).
 
 ### Pluggable LLM provider
 
-`analyze_with_llm` in `metrics_analysis.py` dispatches to a provider adapter based on the `LLM_PROVIDER` env var (defaults to `"groq"`). Providers are registered in the `_PROVIDERS` dict, each mapping to a `_analyze_with_<provider>(prompt: str) -> str` function.
+`complete(prompt: str) -> str` in `llm_providers.py` is the single shared entrypoint — it dispatches to a provider adapter based on the `LLM_PROVIDER` env var (defaults to `"groq"`). Providers are registered in the `_PROVIDERS` dict, each mapping to a `_complete_with_<provider>(prompt: str) -> str` function.
 
 - Adapters import their SDK **lazily inside the function**, not at module top level — this means you only need the SDK installed for the provider you actually use.
-- `anthropic` is an **optional dependency** (`[project.optional-dependencies]` in `pyproject.toml`), not part of the default `uv sync`. If `LLM_PROVIDER=anthropic` is set without the extra installed, `_import_provider_sdk` raises an `ImportError` with the exact fix (`uv sync --extra anthropic`) rather than a bare traceback.
-- To add a new provider: write `_analyze_with_<name>`, register it in `_PROVIDERS`, and (if it needs a new SDK) add it as an optional extra rather than a hard dependency.
+- `anthropic` is an **optional dependency** (`[project.optional-dependencies]` in `pyproject.toml`), not part of the default `uv sync`. If `LLM_PROVIDER=anthropic` is set without the extra installed, `_import_provider_sdk` raises an `ImportError` with the exact fix (`uv sync --extra anthropic`) rather than a bare traceback. Note the Dockerfile has no equivalent path to install this extra — `LLM_PROVIDER=anthropic` will fail inside the container until the Dockerfile is updated to install it too.
+- To add a new provider: write `_complete_with_<name>`, register it in `_PROVIDERS`, and (if it needs a new SDK) add it as an optional extra rather than a hard dependency.
 
 ### Metrics flow (important distinction)
 
