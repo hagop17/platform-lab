@@ -24,6 +24,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from prometheus_client import start_http_server
 
 from metrics_analysis import analyze_metrics
+from rag.router import router as rag_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -54,6 +55,7 @@ work_duration = meter.create_histogram(
 # --- 3. Create the app and auto-instrument it ---
 app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
+app.include_router(rag_router)
 
 
 @app.get("/health")
