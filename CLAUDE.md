@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Typecheck:** `uv run pyright` (runs on the full project, no filenames passed)
 - **Test:** `uv run pytest` — unit tests live under `tests/`, no `__init__.py` (see `pythonpath = ["."]` in `pyproject.toml`'s `[tool.pytest.ini_options]`, which is what lets tests `import metrics_analysis` / `import rag...` directly).
 - **Install optional LLM provider extra:** `uv sync --extra anthropic` (see Architecture below)
-- **Pre-commit hooks:** ruff (`--fix`), ruff-format, pyright, check-yaml, trailing-whitespace, end-of-file-fixer — all must pass before committing.
+- **Pre-commit hooks:** ruff (`--fix`), ruff-format, pyright, pytest (offline, `HF_HUB_OFFLINE=1`), check-yaml, trailing-whitespace, end-of-file-fixer — all must pass before committing.
 
 ## Architecture
 
