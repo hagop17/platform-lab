@@ -56,3 +56,9 @@ dev = [
     "pyright>=1.1.410",
     "pytest>=9.1.0",
 ]
+
+[tool.pytest.ini_options]
+# tests/ has no __init__.py, so pytest's default import mode won't put the
+# project root on sys.path on its own — needed for `import metrics_analysis`
+# / `import rag...` to resolve.
+pythonpath = ["."]

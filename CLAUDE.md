@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Lint:** `uv run ruff check .`
 - **Format:** `uv run ruff format .`
 - **Typecheck:** `uv run pyright` (runs on the full project, no filenames passed)
-- **Test:** `uv run pytest` (no tests exist yet, but `pytest` is a dev dependency — add new tests under `tests/`)
+- **Test:** `uv run pytest` — unit tests live under `tests/`, no `__init__.py` (see `pythonpath = ["."]` in `pyproject.toml`'s `[tool.pytest.ini_options]`, which is what lets tests `import metrics_analysis` / `import rag...` directly).
 - **Install optional LLM provider extra:** `uv sync --extra anthropic` (see Architecture below)
 - **Pre-commit hooks:** ruff (`--fix`), ruff-format, pyright, check-yaml, trailing-whitespace, end-of-file-fixer — all must pass before committing.
 
@@ -34,6 +34,13 @@ Flat layout, no `src/`/`app/` package — top-level modules plus a `rag/` packag
 ### Metrics flow (important distinction)
 
 Prometheus scrapes `app:9464` continuously in the background (every 5s per `prometheus.yml`), independent of the `/api/v1/analyze` route. Hitting that route does **not** trigger a scrape — it only reads whatever Prometheus has already stored for the requested window. If the stack was just started with no traffic yet, generate some first (e.g. hit `/work` a few times) before expecting a meaningful analysis.
+
+## Testing conventions
+
+- Tests must not make network calls or invoke real LLM/RAG calls (no live Prometheus, ChromaDB, embedding inference, or LLM API hits) — stub dependencies instead.
+- Use `monkeypatch` (pytest's built-in fixture) to stub functions/dependencies, not `unittest.mock` — no extra import, auto-reverts per-test, and nothing here needs call-count/argument assertions that would justify `Mock`'s extra ceremony.
+- Use `@pytest.mark.parametrize` (with explicit `id=` per case) when multiple test cases share the same call-and-assert shape and only the input/output data differs — one function, one `assert`, many data rows. Reach for separate `test_*` functions instead when the setup or the behavior under test genuinely differs between cases.
+- `rag/tpr_rag.py` loads `SentenceTransformer`/`ChromaDB` at *import time* (not lazily), so any test that imports it risks a network download on a machine with a cold Hugging Face cache. `tests/test_tpr_rag.py` guards this with a module-level `pytest.skip(..., allow_module_level=True)` if the model isn't already cached — follow that pattern rather than importing it unconditionally.
 
 ## Environment variables
 
