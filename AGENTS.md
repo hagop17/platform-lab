@@ -12,7 +12,7 @@ FastAPI Tax-Engine Prototype.
 - **Format:** `uv run ruff format .` (double quotes)
 - **Typecheck:** `uv run pyright` (full project, no filenames passed)
 - **Test:** `uv run pytest` (see CLAUDE.md "Testing conventions" — no network/LLM/RAG calls, monkeypatch for stubs, parametrize for same-shape cases)
-- **Pre-commit hooks:** ruff (`--fix`), ruff-format, pyright, check-yaml, trailing-whitespace, end-of-file-fixer
+- **Pre-commit hooks:** ruff (`--fix`), ruff-format, pyright, pytest (offline, `HF_HUB_OFFLINE=1`), check-yaml, trailing-whitespace, end-of-file-fixer
 
 ## Project Structure
 
