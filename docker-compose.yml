@@ -1,6 +1,12 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      # Set to "true" (or pass --build-arg WITH_ANTHROPIC=true) and rebuild
+      # when using LLM_PROVIDER=anthropic — the anthropic SDK is an opt-in
+      # extra, not installed by default.
+      args:
+        WITH_ANTHROPIC: ${WITH_ANTHROPIC:-false}
     ports:
       - "8000:8000"   # FastAPI app
       - "9464:9464"   # OTel Prometheus metrics endpoint
