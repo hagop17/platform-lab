@@ -17,10 +17,28 @@ dependencies = [
     "prometheus-client>=0.25.0",
     "python-dotenv>=1.0.1",
     "sentence-transformers>=3.0.0",
+    # Listed explicitly (not just pulled in transitively by sentence-transformers)
+    # so that [tool.uv.sources] below can override its index — uv only applies
+    # source overrides to direct project dependencies.
+    "torch>=1.11.0",
 ]
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.116.0"]
+
+# This container never does GPU inference (see Dockerfile) — pin torch to
+# the CPU-only wheel index so `uv sync` doesn't pull the CUDA-bundled build.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+# No CPU-specific wheel exists for macOS (default PyPI torch is already
+# CPU-only there); only override on Linux, which is what the Dockerfile builds for.
+torch = [
+    { index = "pytorch-cpu", marker = "platform_system == 'Linux'" },
+]
 
 [tool.ruff]
 line-length = 100
