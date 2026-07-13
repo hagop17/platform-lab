@@ -12,7 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   procps \
   sudo \
   fzf \
-  zsh \
   man-db \
   unzip \
   gnupg2 \
@@ -37,7 +36,11 @@ ARG USERNAME=node
 RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
   && mkdir /commandhistory \
   && touch /commandhistory/.bash_history \
-  && chown -R $USERNAME /commandhistory
+  && chown -R $USERNAME /commandhistory \
+  && echo "$SNIPPET" >> "/home/$USERNAME/.bashrc"
+
+# `ll` was an oh-my-zsh default alias, lost along with zsh — restore it for bash.
+RUN echo "alias ll='ls -alF'" >> "/home/$USERNAME/.bashrc"
 
 # Set `DEVCONTAINER` environment variable to help with orientation
 ENV DEVCONTAINER=true
@@ -61,22 +64,12 @@ USER node
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH=$PATH:/usr/local/share/npm-global/bin
 
-# Set the default shell to zsh rather than sh
-ENV SHELL=/bin/zsh
+# Set the default shell to bash
+ENV SHELL=/bin/bash
 
 # Set the default editor and visual
 ENV EDITOR=nano
 ENV VISUAL=nano
-
-# Default powerline10k theme
-ARG ZSH_IN_DOCKER_VERSION=1.2.0
-RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
-  -p git \
-  -p fzf \
-  -a "source /usr/share/doc/fzf/examples/key-bindings.zsh" \
-  -a "source /usr/share/doc/fzf/examples/completion.zsh" \
-  -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
-  -x
 
 # Install Claude
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
