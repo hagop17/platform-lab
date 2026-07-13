@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Dev Container Constraints
+
+This repo runs in a sandboxed dev container for unattended work (`--dangerously-skip-permissions`). Full details in `devcontainer-spec.md` — read it before assuming a network failure is a code bug rather than a firewall restriction.
+
+Key constraints to know:
+- **Network is default-deny.** Only npm, PyPI, Anthropic's API, GitHub (read-only), and a few VS Code/telemetry domains are reachable. Anything else fails at the network layer, not the application layer.
+- **GitHub access is read-only by design.** No push credentials exist in this container. `git push` will fail on authentication, not connectivity — that's expected, not a bug to work around. Pushing happens from the host terminal.
+- **`.claude` config is a container-scoped volume**, separate from the host's real Claude Code credential — this is intentional isolation, not a misconfiguration.
+
+If a task requires reaching a domain not in the allowlist, or requires pushing to GitHub, surface that as a blocker rather than trying to work around it.
+
 ## Toolchain & commands
 
 - **Package manager:** `uv` — do not use `pip` or `poetry` directly for dependency management.
