@@ -34,16 +34,18 @@ A firewall can't distinguish `git pull` from `git push` — both are the same ne
 **API key passthrough — via `remoteEnv`, not `containerEnv`:**
 ```jsonc
 "remoteEnv": {
-  "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
+  "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}",
+  "GROQ_API_KEY": "${localEnv:GROQ_API_KEY}"
 }
 ```
-`containerEnv` values are visible via `docker inspect`; `remoteEnv` only injects into the actual session, so it doesn't sit in container metadata.
+`containerEnv` values are visible via `docker inspect`; `remoteEnv` only injects into the actual session, so it doesn't sit in container metadata. Both keys are forwarded from the host shell's environment (`localEnv`) — separate from the app's own `.env` file, which is only read when the app runs via `load_dotenv()` (e.g. inside `docker compose`, where `.env` is picked up directly by Compose).
 
 ## Firewall allowlist (current)
 
 ```
 registry.npmjs.org          — Claude Code install (npm)
-api.anthropic.com            — Claude Code's actual API endpoint
+api.anthropic.com            — Claude Code's actual API endpoint; also the app's optional LLM_PROVIDER=anthropic
+api.groq.com                 — the app's default LLM_PROVIDER (metrics analysis + RAG)
 sentry.io                    — Claude Code's own error reporting
 marketplace.visualstudio.com — VS Code extension installs (GUI use only)
 vscode.blob.core.windows.net — VS Code Server download (GUI use only)

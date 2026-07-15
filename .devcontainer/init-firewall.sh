@@ -71,6 +71,7 @@ ipset create allowed-domains hash:net
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
+    "api.groq.com" \
     "sentry.io" \
     "marketplace.visualstudio.com" \
     "vscode.blob.core.windows.net" \
