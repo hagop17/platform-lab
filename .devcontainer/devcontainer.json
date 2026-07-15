@@ -42,7 +42,8 @@
     "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume"
   ],
   "remoteEnv": {
-    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}",
+    "GROQ_API_KEY": "${localEnv:GROQ_API_KEY}"
   },
   "containerEnv": {
     "NODE_OPTIONS": "--max-old-space-size=4096",
