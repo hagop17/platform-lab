@@ -1,5 +1,5 @@
 {
-  "name": "fastapi-demo Sandbox",
+  "name": "platform-lab Sandbox",
   "build": {
     "dockerfile": "Dockerfile",
     "args": {

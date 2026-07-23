@@ -62,7 +62,7 @@ Set in `.env` (gitignored) — loaded by `docker-compose.yml` into the `app` ser
 - `ANTHROPIC_API_KEY` — required only if `LLM_PROVIDER=anthropic`.
 - `LLM_PROVIDER` — `groq` (default) or `anthropic`.
 - `WITH_ANTHROPIC` — Docker build arg (not a runtime var), `false` by default; set `true` to install the `anthropic` extra in the image (see Toolchain & commands above).
-- `TPR_RAG_DATA_DIR` — optional; where the RAG feature's ChromaDB index lives (`rag/ingest.py`, `rag/tpr_rag.py`). Defaults to `~/.tpr-rag/chroma_data`, deliberately outside the repo. In Docker, `docker-compose.yml` sets this to `/root/.tpr-rag/chroma_data` and bind-mounts the host's `~/.tpr-rag/chroma_data` into it — see `docs/tpr_rag_spec.md` for the full rationale.
+- `TPR_RAG_DATA_DIR` — optional; where the RAG feature's ChromaDB index lives (`rag/ingest.py`, `rag/tpr_rag.py`). Defaults to `~/.tpr-rag/chroma_data`, deliberately outside the repo. In Docker, `docker-compose.yml` sets this to `/home/appuser/.tpr-rag/chroma_data` (the app container runs as a non-root `appuser`, uid 1000 — see `Dockerfile`) and bind-mounts the host's `~/.tpr-rag/chroma_data` into it — see `docs/tpr_rag_spec.md` for the full rationale.
 
 ## Gotchas
 

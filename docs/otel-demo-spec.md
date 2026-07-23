@@ -5,7 +5,7 @@
 A local Podman Compose stack demonstrating OpenTelemetry instrumentation in a
 FastAPI app, exporting metrics to Prometheus (pull model) and traces to
 console, with Grafana visualizing the metrics. This is a standalone learning
-demo, not part of the main fastapi-demo portfolio app.
+demo, not part of the main platform-lab portfolio app.
 
 ## Structure to create
 
@@ -67,7 +67,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 logging.basicConfig(level=logging.INFO)
 
 # A Resource identifies this service in whatever backend receives the data
-resource = Resource.create({"service.name": "fastapi-demo"})
+resource = Resource.create({"service.name": "platform-lab"})
 
 # --- 1. Configure tracing ---
 tracer_provider = TracerProvider(resource=resource)
@@ -177,7 +177,7 @@ global:
   scrape_interval: 5s
 
 scrape_configs:
-  - job_name: "fastapi-demo"
+  - job_name: "platform-lab"
     static_configs:
       - targets: ["app:9464"]
 ```
@@ -191,7 +191,7 @@ scrape_configs:
    all routes (auto-instrumented ones and the manual `do_work` span)
 4. `curl http://localhost:9464/metrics` — confirm `app_requests_total` and
    `app_work_duration_seconds` appear in Prometheus exposition format
-5. Open `http://localhost:9090/targets` — confirm the `fastapi-demo` target
+5. Open `http://localhost:9090/targets` — confirm the `platform-lab` target
    shows state `UP`
 6. Open `http://localhost:3000` (login `admin`/`admin`) — add Prometheus
    (`http://prometheus:9090`) as a data source, then build a panel querying

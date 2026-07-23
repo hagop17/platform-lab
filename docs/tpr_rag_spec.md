@@ -7,7 +7,7 @@ about whether a repair/improvement must be capitalized or can be deducted,
 grounded in the actual U.S. tangible property regulations (TPR) — not the
 LLM's general training knowledge.
 
-This lives inside the existing `fastapi-demo` repo, in its own subdirectory
+This lives inside the existing `platform-lab` repo, in its own subdirectory
 (`rag/`) — separate from the OTel/Prometheus/Grafana pieces (which are about
 observability, not RAG), but not a standalone repo.
 
