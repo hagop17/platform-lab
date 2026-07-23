@@ -17,7 +17,7 @@ COLLECTION_NAME = "tpr_regulations"
 CHROMA_PATH = Path(os.environ.get("TPR_RAG_DATA_DIR", Path.home() / ".tpr-rag" / "chroma_data"))
 
 # Confirmed by directly fetching each URL and inspecting the real HTML (see
-# tpr_rag_spec.md "Confirmed HTML structure" / "Source selection" sections).
+# docs/tpr_rag_spec.md "Confirmed HTML structure" / "Source selection" sections).
 # eCFR.gov was tried first and rejected: it blocks plain scripted requests
 # (returns a bot-check page), whereas Cornell LII responds with real content.
 SOURCES = {
@@ -34,7 +34,7 @@ SOURCES = {
         # stable top-level anchor; the only id="i" element on the whole
         # page is an unrelated nested list item under (h)(5) (even
         # Cornell's own "#i" cross-reference links resolve to it). See
-        # tpr_rag_spec.md "Confirmed HTML structure" for the full trace.
+        # docs/tpr_rag_spec.md "Confirmed HTML structure" for the full trace.
         "subsections": {"d", "h", "j", "k", "l"},
     },
 }
