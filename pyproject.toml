@@ -1,5 +1,5 @@
 [project]
-name = "fastapi-demo"
+name = "platform-lab"
 version = "0.1.0"
 description = "FastAPI service with OpenTelemetry, Prometheus/Grafana, and LLM-assisted metrics + RAG analysis"
 readme = "README.md"

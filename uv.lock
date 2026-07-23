@@ -554,66 +554,6 @@ wheels = [
 ]
 
 [[package]]
-name = "fastapi-demo"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "chromadb" },
-    { name = "fastapi", extra = ["standard"] },
-    { name = "groq" },
-    { name = "httpx" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-exporter-prometheus" },
-    { name = "opentelemetry-instrumentation-fastapi" },
-    { name = "opentelemetry-sdk" },
-    { name = "prometheus-client" },
-    { name = "python-dotenv" },
-    { name = "sentence-transformers" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
-]
-
-[package.optional-dependencies]
-anthropic = [
-    { name = "anthropic" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.116.0" },
-    { name = "beautifulsoup4", specifier = ">=4.12.3" },
-    { name = "chromadb", specifier = ">=0.5.0" },
-    { name = "fastapi", extras = ["standard"], specifier = ">=0.137.1" },
-    { name = "groq", specifier = ">=0.32.0" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "opentelemetry-api", specifier = ">=1.43.0" },
-    { name = "opentelemetry-exporter-prometheus", specifier = ">=0.64b0" },
-    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.64b0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.43.0" },
-    { name = "prometheus-client", specifier = ">=0.25.0" },
-    { name = "python-dotenv", specifier = ">=1.0.1" },
-    { name = "sentence-transformers", specifier = ">=3.0.0" },
-    { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=1.11.0" },
-    { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=1.11.0", index = "https://download.pytorch.org/whl/cpu" },
-]
-provides-extras = ["anthropic"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pyright", specifier = ">=1.1.410" },
-    { name = "pytest", specifier = ">=9.1.0" },
-    { name = "ruff", specifier = ">=0.15.22" },
-]
-
-[[package]]
 name = "fastar"
 version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1772,6 +1712,66 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d7/f1/e7a6dd94a8d4a5626c03e4e99c87f241ba9e350cd9e6d75123f992427270/packaging-26.2.tar.gz", hash = "sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661", size = 228134, upload-time = "2026-04-24T20:15:23.917Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl", hash = "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e", size = 100195, upload-time = "2026-04-24T20:15:22.081Z" },
+]
+
+[[package]]
+name = "platform-lab"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "beautifulsoup4" },
+    { name = "chromadb" },
+    { name = "fastapi", extra = ["standard"] },
+    { name = "groq" },
+    { name = "httpx" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-prometheus" },
+    { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-sdk" },
+    { name = "prometheus-client" },
+    { name = "python-dotenv" },
+    { name = "sentence-transformers" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
+]
+
+[package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.116.0" },
+    { name = "beautifulsoup4", specifier = ">=4.12.3" },
+    { name = "chromadb", specifier = ">=0.5.0" },
+    { name = "fastapi", extras = ["standard"], specifier = ">=0.137.1" },
+    { name = "groq", specifier = ">=0.32.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "opentelemetry-api", specifier = ">=1.43.0" },
+    { name = "opentelemetry-exporter-prometheus", specifier = ">=0.64b0" },
+    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.64b0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.43.0" },
+    { name = "prometheus-client", specifier = ">=0.25.0" },
+    { name = "python-dotenv", specifier = ">=1.0.1" },
+    { name = "sentence-transformers", specifier = ">=3.0.0" },
+    { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=1.11.0" },
+    { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=1.11.0", index = "https://download.pytorch.org/whl/cpu" },
+]
+provides-extras = ["anthropic"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.410" },
+    { name = "pytest", specifier = ">=9.1.0" },
+    { name = "ruff", specifier = ">=0.15.22" },
 ]
 
 [[package]]

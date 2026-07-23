@@ -30,7 +30,7 @@ from rag.router import router as rag_router
 logging.basicConfig(level=logging.INFO)
 
 # A Resource identifies this service in whatever backend receives the data
-resource = Resource.create({"service.name": "fastapi-demo"})
+resource = Resource.create({"service.name": "platform-lab"})
 
 # --- 1. Configure tracing ---
 tracer_provider = TracerProvider(resource=resource)
