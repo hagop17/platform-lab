@@ -45,8 +45,13 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["E", "F", "I", "S"]
 ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# assert is how pytest works; S101 (assert stripped under `python -O`) doesn't
+# apply to test code.
+"tests/**" = ["S101"]
 
 [tool.ruff.format]
 quote-style = "double"
