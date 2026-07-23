@@ -19,6 +19,7 @@ repos:
         entry: env HF_HUB_OFFLINE=1 uv run pytest
         language: system
         pass_filenames: false
+        files: \.py$|pyproject\.toml$|uv\.lock$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
