@@ -8,7 +8,8 @@ import logging
 import random
 import time
 
-from fastapi import FastAPI
+import httpx
+from fastapi import FastAPI, HTTPException
 
 # --- Tracing setup ---
 # --- Metrics setup ---
@@ -79,15 +80,27 @@ def do_work():
 
 
 @app.get("/")
-def read_root() -> dict[str, str]:
-    return {"Hello": "World"}
-
-
-@app.get("/items/{item_id}")
-def read_item(item_id: int, q: str | None = None) -> dict:
-    return {"item_id": item_id, "q": q}
+def index() -> dict:
+    """Route index — a quick map of what this service exposes."""
+    return {
+        "endpoints": {
+            "/health": "liveness check",
+            "/work": "simulated work — emits traces + metrics",
+            "/api/v1/analyze": "LLM analysis of a Prometheus metric window",
+            "/api/v1/repair-tax-impact": "RAG-grounded repair-vs-capitalize answer",
+            "/api/v1/repair-tax-impact-no-rag": "same question, ungrounded (for comparison)",
+            "/docs": "OpenAPI UI",
+        },
+    }
 
 
 @app.get("/api/v1/analyze")
 def analyze(query: str = "up", minutes: int = 15):
-    return {"analysis": analyze_metrics(query, minutes)}
+    try:
+        return {"analysis": analyze_metrics(query, minutes)}
+    except httpx.HTTPError as exc:
+        # Prometheus unreachable, timed out, or returned a non-2xx — surface a
+        # clean 502 rather than a raw traceback. Common in local dev when the
+        # app runs outside the compose network (see PROMETHEUS_URL).
+        logging.exception("Prometheus query failed")
+        raise HTTPException(status_code=502, detail=f"Prometheus query failed: {exc}") from exc
