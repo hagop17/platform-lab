@@ -1,3 +1,8 @@
+# Docker Official Python image — Python's own build, pinned to an exact
+# interpreter version and patched promptly for CVEs, so there's no
+# self-managed Python install to maintain. `-slim` (Debian minimal + glibc)
+# over `-alpine` (musl) so the precompiled manylinux wheels for torch /
+# sentence-transformers / chromadb install directly instead of recompiling.
 FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
