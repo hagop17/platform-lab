@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      # rag/tpr_rag.py loads the embedding model at import time; the RAG tests
+      # self-skip if it isn't cached (see tests/test_tpr_rag.py). Warm the HF
+      # cache here so those tests actually run in CI instead of silently skipping.
+      - name: Warm embedding-model cache
+        run: uv run python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Typecheck
+        run: uv run pyright
+
+      # HF_HUB_OFFLINE mirrors the pre-commit hook: the model is already cached
+      # above, so the suite runs fully without any test making a network call.
+      - name: Test
+        run: uv run pytest
+        env:
+          HF_HUB_OFFLINE: "1"
