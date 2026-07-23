@@ -122,30 +122,38 @@ devcontainer up --workspace-folder ~/src/platform-lab --build-no-cache
 
 ## Avoiding lost sessions
 
-Each devcontainer exec ... claude invocation starts a process — if it exits (intentionally or not), the conversation isn't gone, but you do need one of the two options below to get back to it without losing context.
+Each `devcontainer exec ... claude` invocation starts a process — if it exits (intentionally or not), the conversation isn't gone, but you do need one of the two options below to get back to it without losing context.
 
-Option 1 — Resume the most recent session:
+**Option 1 — Resume the most recent session:**
 
-bashdevcontainer exec --workspace-folder $(pwd) env TERM=xterm-256color claude --continue
+```bash
+devcontainer exec --workspace-folder $(pwd) env TERM=xterm-256color claude --continue
+```
 
 Picks up the last session in this project with full context intact. To choose from multiple past sessions instead of just the most recent:
 
-bashdevcontainer exec --workspace-folder $(pwd) env TERM=xterm-256color claude
+```bash
+devcontainer exec --workspace-folder $(pwd) env TERM=xterm-256color claude
 # then inside: /resume
+```
 
-Option 2 — Keep it running via tmux, don't exit at all:
+**Option 2 — Keep it running via tmux, don't exit at all:**
 
-bashdevcontainer exec --workspace-folder $(pwd) tmux new -s claude-session
+```bash
+devcontainer exec --workspace-folder $(pwd) tmux new -s claude-session
 claude --dangerously-skip-permissions
 # Ctrl+B, then D to detach — claude keeps running
+```
 
 Reattach later, from the same or a different terminal:
 
-bashdevcontainer exec --workspace-folder $(pwd) tmux attach -t claude-session
+```bash
+devcontainer exec --workspace-folder $(pwd) tmux attach -t claude-session
+```
 
-This is the right choice for genuinely unattended work — the process never stops, so there's no "resume" needed. --continue/--resume is the fallback for when a session did end (crash, accidental exit, closed terminal without tmux); tmux is what prevents that from happening in the first plac
+This is the right choice for genuinely unattended work — the process never stops, so there's no "resume" needed. `--continue`/`--resume` is the fallback for when a session did end (crash, accidental exit, closed terminal without tmux); tmux is what prevents that from happening in the first place.
 
-## Remaining hardening not yet done (candidates for revisit, esp. before reusing this pattern for Tissani)
+## Remaining hardening not yet done (candidates for revisit)
 
 - Host-network `/24` firewall rule is broader than strictly necessary (grants the container access to the whole local subnet, not just this machine) — acceptable for this low-stakes public repo, worth narrowing before reuse on a higher-stakes project.
 - No inner `/sandbox` (Bash sandbox) layered inside the container yet — optional additional per-command restriction on top of the container boundary.
