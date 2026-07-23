@@ -18,7 +18,7 @@ services:
     volumes:
       # Shares the host's already-ingested ChromaDB index (run rag/ingest.py
       # on the host, not inside the container, to avoid root-owned files —
-      # see tpr_rag_spec.md). The container only reads it; the app process
+      # see docs/tpr_rag_spec.md). The container only reads it; the app process
       # still needs a restart after any re-ingestion (same rule as running
       # outside Docker).
       - ${HOME}/.tpr-rag/chroma_data:/root/.tpr-rag/chroma_data
@@ -35,4 +35,6 @@ services:
     ports:
       - "3000:3000"
     environment:
+      # Local demo only — this stack binds to localhost and ships no real data.
+      # Do not reuse this compose file as-is for anything internet-facing.
       - GF_SECURITY_ADMIN_PASSWORD=admin

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Dev Container Constraints
 
-This repo runs in a sandboxed dev container for unattended work (`--dangerously-skip-permissions`). Full details in `devcontainer-spec.md` — read it before assuming a network failure is a code bug rather than a firewall restriction.
+This repo runs in a sandboxed dev container for unattended work (`--dangerously-skip-permissions`). Full details in `docs/devcontainer-spec.md` — read it before assuming a network failure is a code bug rather than a firewall restriction.
 
 Key constraints to know:
 - **Network is default-deny.** Only npm, PyPI, Anthropic's API, GitHub (read-only), and a few VS Code/telemetry domains are reachable. Anything else fails at the network layer, not the application layer.
@@ -30,7 +30,7 @@ If a task requires reaching a domain not in the allowlist, or requires pushing t
 
 Flat layout, no `src/`/`app/` package — top-level modules plus a `rag/` package:
 
-- **`main.py`** — FastAPI app entrypoint. Wires up OpenTelemetry (traces to console via `ConsoleSpanExporter`, metrics to Prometheus pull-model via `PrometheusMetricReader` on port `9464`), mounts `rag_router`, then defines routes (`/`, `/health`, `/work`, `/items/{item_id}`, `/api/v1/analyze`).
+- **`main.py`** — FastAPI app entrypoint. Wires up OpenTelemetry (traces to console via `ConsoleSpanExporter`, metrics to Prometheus pull-model via `PrometheusMetricReader` on port `9464`), mounts `rag_router`, then defines routes (`/` route index, `/health`, `/work`, `/api/v1/analyze`).
 - **`metrics_analysis.py`** — implements `/api/v1/analyze`: queries Prometheus's `query_range` API for a metric window, formats the time series into compact text, then calls `llm_providers.complete()` for anomaly/trend analysis.
 - **`llm_providers.py`** — the shared LLM dispatch layer (see below). Used by both `metrics_analysis.py` and `rag/`.
 - **`rag/`** — tangible-property-regulations RAG demo. `rag/ingest.py` scrapes/chunks CFR + IRS FAQ pages into a persistent ChromaDB collection; `rag/tpr_rag.py` embeds a question, retrieves matching chunks, and builds the grounded prompt; `rag/router.py` exposes `/api/v1/repair-tax-impact` (RAG-grounded) and `/api/v1/repair-tax-impact-no-rag` (same question sent straight to the LLM, for comparison).
@@ -62,7 +62,7 @@ Set in `.env` (gitignored) — loaded by `docker-compose.yml` into the `app` ser
 - `ANTHROPIC_API_KEY` — required only if `LLM_PROVIDER=anthropic`.
 - `LLM_PROVIDER` — `groq` (default) or `anthropic`.
 - `WITH_ANTHROPIC` — Docker build arg (not a runtime var), `false` by default; set `true` to install the `anthropic` extra in the image (see Toolchain & commands above).
-- `TPR_RAG_DATA_DIR` — optional; where the RAG feature's ChromaDB index lives (`rag/ingest.py`, `rag/tpr_rag.py`). Defaults to `~/.tpr-rag/chroma_data`, deliberately outside the repo. In Docker, `docker-compose.yml` sets this to `/root/.tpr-rag/chroma_data` and bind-mounts the host's `~/.tpr-rag/chroma_data` into it — see `tpr_rag_spec.md` for the full rationale.
+- `TPR_RAG_DATA_DIR` — optional; where the RAG feature's ChromaDB index lives (`rag/ingest.py`, `rag/tpr_rag.py`). Defaults to `~/.tpr-rag/chroma_data`, deliberately outside the repo. In Docker, `docker-compose.yml` sets this to `/root/.tpr-rag/chroma_data` and bind-mounts the host's `~/.tpr-rag/chroma_data` into it — see `docs/tpr_rag_spec.md` for the full rationale.
 
 ## Gotchas
 
@@ -71,4 +71,4 @@ Set in `.env` (gitignored) — loaded by `docker-compose.yml` into the `app` ser
 - **The RAG embedding model is baked into the Docker image at build time** (`Dockerfile`, right after `uv sync`) so container startup never depends on Hugging Face Hub being reachable. This means image builds now have a one-time network dependency on HF Hub that didn't exist before RAG was added.
 - Ruff `target-version = "py311"` even though `requires-python = ">=3.12"`.
 - `.gitignore` references `data/`, `*.db`, `.terraform/`, `*.tfstate*` — likely relevant for future data store / infra work, not currently used.
-- `otel-demo-spec.md` and `otel-demo-llm-analysis-spec.md` are planning specs (the latter originally assumed Podman/`podman-compose`; this repo now uses Docker/`docker compose` — the underlying compose file and commands are equivalent).
+- `docs/otel-demo-spec.md` and `docs/otel-demo-llm-analysis-spec.md` are planning specs (the latter originally assumed Podman/`podman-compose`; this repo now uses Docker/`docker compose` — the underlying compose file and commands are equivalent).
