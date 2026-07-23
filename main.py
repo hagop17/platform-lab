@@ -30,7 +30,7 @@ from rag.router import router as rag_router
 logging.basicConfig(level=logging.INFO)
 
 # A Resource identifies this service in whatever backend receives the data
-resource = Resource.create({"service.name": "fastapi-demo"})
+resource = Resource.create({"service.name": "platform-lab"})
 
 # --- 1. Configure tracing ---
 tracer_provider = TracerProvider(resource=resource)
@@ -68,7 +68,7 @@ def health():
 def do_work():
     with tracer.start_as_current_span("do_work") as span:
         start = time.time()
-        duration = random.uniform(0.05, 0.3)
+        duration = random.uniform(0.05, 0.3)  # noqa: S311 — simulated latency, not security-sensitive
         time.sleep(duration)
 
         span.set_attribute("simulated_duration", duration)

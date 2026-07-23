@@ -10,8 +10,13 @@ generation (RAG)** grounding an LLM in real source documents — and a side-by-s
 endpoint demonstrating how the same question answered *without* retrieval goes
 wrong.
 
-Built as an infrastructure/platform portfolio piece. Roadmap below covers the
-Terraform, Kubernetes, and CI/CD layers being added on top.
+Built as an infrastructure/platform portfolio piece. The app is deliberately
+small — the focus is on the engineering around it: supply-chain-hardened CI
+(SHA-pinned actions, `pip-audit`, ruff security rules), non-root containers,
+hermetic tests that never touch the network, AI-assisted development run inside
+a [default-deny-firewalled dev container](docs/devcontainer-spec.md), and design
+docs that record the tradeoffs and gotchas actually hit along the way. Roadmap
+below covers the Terraform, Kubernetes, and CI/CD layers being added on top.
 
 ---
 
