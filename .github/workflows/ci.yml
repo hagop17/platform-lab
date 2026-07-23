@@ -37,6 +37,9 @@ jobs:
       - name: Typecheck
         run: uv run pyright
 
+      - name: Audit dependencies for known vulnerabilities
+        run: uvx pip-audit
+
       # HF_HUB_OFFLINE mirrors the pre-commit hook: the model is already cached
       # above, so the suite runs fully without any test making a network call.
       - name: Test
