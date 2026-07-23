@@ -1,4 +1,4 @@
-# `fastapi-demo` Dev Container
+# `platform-lab` Dev Container
 
 Sandboxed environment for running Claude Code unattended (`--dangerously-skip-permissions`) against this repo. Based on Anthropic's reference dev container (`anthropics/claude-code/.devcontainer`), adapted for a Python/FastAPI project with a tighter network allowlist.
 
@@ -71,15 +71,15 @@ Two allowed domains can resolve to the same IP (common with CDN-hosted services)
 **3. Docker build cache serves a stale `init-firewall.sh` after editing it.**
 `COPY init-firewall.sh /usr/local/bin/` happens at image build time. Editing the source file and just recreating the *container* isn't enough if Docker reuses a cached image layer — the old script stays baked in. Fix: rebuild with both flags together:
 ```bash
-devcontainer up --workspace-folder ~/src/fastapi-demo --build-no-cache --remove-existing-container
+devcontainer up --workspace-folder ~/src/platform-lab --build-no-cache --remove-existing-container
 ```
 Verify the fix actually landed before trusting it:
 ```bash
-devcontainer exec --workspace-folder ~/src/fastapi-demo cat /usr/local/bin/init-firewall.sh | grep -A5 "for domain in"
+devcontainer exec --workspace-folder ~/src/platform-lab cat /usr/local/bin/init-firewall.sh | grep -A5 "for domain in"
 ```
 
 **4. VS Code and the standalone CLI generate different container labels for the same folder.**
-The CLI (`devcontainer up` from a WSL2 terminal) labels the container with a native Linux path (`devcontainer.local_folder=/home/hagop/src/fastapi-demo`). VS Code's Dev Containers extension — even correctly connected via WSL Remote — labels it with a Windows UNC-style path (`\\wsl.localhost\...`) instead. This is a known inconsistency between the two tools, not user error, and results in **two separate containers** for the same project if you use "Reopen in Container" after already building via the CLI.
+The CLI (`devcontainer up` from a WSL2 terminal) labels the container with a native Linux path (`devcontainer.local_folder=/home/hagop/src/platform-lab`). VS Code's Dev Containers extension — even correctly connected via WSL Remote — labels it with a Windows UNC-style path (`\\wsl.localhost\...`) instead. This is a known inconsistency between the two tools, not user error, and results in **two separate containers** for the same project if you use "Reopen in Container" after already building via the CLI.
 
 Fix: don't rely on automatic label matching across tools. Build via the CLI as the source of truth, then in VS Code use:
 ```
@@ -98,26 +98,26 @@ Note this only controls the *container* — it does not protect against the *hos
 
 ```bash
 # Build / start
-devcontainer up --workspace-folder ~/src/fastapi-demo
+devcontainer up --workspace-folder ~/src/platform-lab
 
 # Run a one-off command inside it
-devcontainer exec --workspace-folder ~/src/fastapi-demo <command>
+devcontainer exec --workspace-folder ~/src/platform-lab <command>
 
 # Authenticate Claude Code (first time, or after volume deletion)
-devcontainer exec --workspace-folder ~/src/fastapi-demo claude
+devcontainer exec --workspace-folder ~/src/platform-lab claude
 
 # Verify the firewall is actually enforcing what's documented above
-devcontainer exec --workspace-folder ~/src/fastapi-demo curl -m 5 https://pypi.org      # expect: success
-devcontainer exec --workspace-folder ~/src/fastapi-demo curl -m 5 https://example.com   # expect: fail
+devcontainer exec --workspace-folder ~/src/platform-lab curl -m 5 https://pypi.org      # expect: success
+devcontainer exec --workspace-folder ~/src/platform-lab curl -m 5 https://example.com   # expect: fail
 
 # Run unattended (wrap in tmux if you want it to survive closing the terminal)
 tmux new -s claude-session
-devcontainer exec --workspace-folder ~/src/fastapi-demo claude --dangerously-skip-permissions
+devcontainer exec --workspace-folder ~/src/platform-lab claude --dangerously-skip-permissions
 # Ctrl+B, D to detach; `tmux attach -t claude-session` to resume
 
 # Full clean rebuild (container + image, no cache)
-docker ps -a --filter "label=devcontainer.config_file=/home/hagop/src/fastapi-demo/.devcontainer/devcontainer.json" -q | xargs -r docker rm -f
-devcontainer up --workspace-folder ~/src/fastapi-demo --build-no-cache
+docker ps -a --filter "label=devcontainer.config_file=/home/hagop/src/platform-lab/.devcontainer/devcontainer.json" -q | xargs -r docker rm -f
+devcontainer up --workspace-folder ~/src/platform-lab --build-no-cache
 ```
 
 ## Avoiding lost sessions
