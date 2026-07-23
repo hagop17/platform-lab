@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import datetime, timezone
 
@@ -5,7 +6,10 @@ import httpx
 
 from llm_providers import complete
 
-PROMETHEUS_URL = "http://prometheus:9090"  # service name inside the compose network
+# Defaults to the service name inside the compose network. Override when running
+# the app outside Docker (e.g. `uv run fastapi dev main.py`), where Prometheus is
+# reachable on localhost instead: PROMETHEUS_URL=http://localhost:9090
+PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
 
 
 def query_prometheus(query: str, minutes: int = 15) -> dict:
