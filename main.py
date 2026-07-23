@@ -68,7 +68,7 @@ def health():
 def do_work():
     with tracer.start_as_current_span("do_work") as span:
         start = time.time()
-        duration = random.uniform(0.05, 0.3)
+        duration = random.uniform(0.05, 0.3)  # noqa: S311 — simulated latency, not security-sensitive
         time.sleep(duration)
 
         span.set_attribute("simulated_duration", duration)
