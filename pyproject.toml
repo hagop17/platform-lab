@@ -1,7 +1,7 @@
 [project]
 name = "fastapi-demo"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastAPI service with OpenTelemetry, Prometheus/Grafana, and LLM-assisted metrics + RAG analysis"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

@@ -16,9 +16,14 @@ FastAPI Tax-Engine Prototype.
 
 ## Project Structure
 
-- Flat layout — no `src/` or `app/` package. Single module `main.py`.
-- Entrypoint: `main.py` defines `app = FastAPI()`.
-- Runtime deps: only `fastapi[standard]` (includes uvicorn, httpx, jinja2, etc.).
+- Flat layout — no `src/` or `app/` package. Top-level modules (`main.py`,
+  `metrics_analysis.py`, `llm_providers.py`) plus a `rag/` package.
+- Entrypoint: `main.py` defines `app = FastAPI()`, wires up OpenTelemetry, and
+  mounts `rag.router`.
+- Runtime deps include `fastapi[standard]`, OpenTelemetry + Prometheus client,
+  `groq` (default LLM provider), and the RAG stack (`chromadb`,
+  `sentence-transformers`, `beautifulsoup4`). See `pyproject.toml`; `anthropic`
+  is an opt-in extra. Full architecture in `CLAUDE.md`.
 - Python >=3.12.
 
 ## Conventions
