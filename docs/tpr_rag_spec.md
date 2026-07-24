@@ -83,11 +83,14 @@ complexity for this project's scale — see Verification steps.)
 ## Environment variables
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...
+GROQ_API_KEY=...                        # required — default LLM_PROVIDER
+ANTHROPIC_API_KEY=sk-ant-...            # only if LLM_PROVIDER=anthropic
 TPR_RAG_DATA_DIR=/path/to/chroma_data   # optional, see below
 ```
-`ANTHROPIC_API_KEY` follows the same `.env` + gitignore pattern as other
-projects — never commit the key.
+These follow the same `.env` + gitignore pattern as other projects — never
+commit a key. (This section reflects the original design's Anthropic-only
+plan; see "Implementation findings" below for why the LLM call ended up
+provider-configurable via `llm_providers.py` instead.)
 
 `TPR_RAG_DATA_DIR` controls where ChromaDB persists its index. It's
 intentionally kept **outside the repo/source tree** so the data survives a

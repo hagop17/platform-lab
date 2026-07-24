@@ -71,4 +71,4 @@ Set in `.env` (gitignored) — loaded by `docker-compose.yml` into the `app` ser
 - **The RAG embedding model is baked into the Docker image at build time** (`Dockerfile`, right after `uv sync`) so container startup never depends on Hugging Face Hub being reachable. This means image builds now have a one-time network dependency on HF Hub that didn't exist before RAG was added.
 - Ruff `target-version = "py311"` even though `requires-python = ">=3.12"`.
 - `.gitignore` references `data/`, `*.db`, `.terraform/`, `*.tfstate*` — likely relevant for future data store / infra work, not currently used.
-- `docs/otel-demo-spec.md` and `docs/otel-demo-llm-analysis-spec.md` are planning specs (the latter originally assumed Podman/`podman-compose`; this repo now uses Docker/`docker compose` — the underlying compose file and commands are equivalent).
+- `docs/` holds two design docs: `tpr_rag_spec.md` (RAG design + post-build findings) and `devcontainer-spec.md` (sandboxed dev container). Two earlier planning specs (`otel-demo-spec.md`, `otel-demo-llm-analysis-spec.md`) were deleted as stale/superseded — don't reference them.

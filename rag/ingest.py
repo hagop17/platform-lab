@@ -162,7 +162,7 @@ def chunk_cfr_page(html: str, source_label: str, wanted_subsections: set[str]) -
     For each wanted top-level subsection, collect its header paragraph plus
     all sibling <p> tags (e.g. class="psection-2" for nested (j)(1), (j)(2),
     ...) up to the next top-level marker, then split that body into
-    embedding-window-sized sub-chunks (see _split_subsection_body). The
+    embedding-window-sized sub-chunks (see _pack). The
     et03 title span can contain nested markup (e.g. a definedterm link), so
     title extraction uses get_text(), not raw string matching.
     """

@@ -7,8 +7,7 @@ plain-language insight. A FastAPI app emits **OpenTelemetry** traces and metrics
 **Prometheus** scrapes them and **Grafana** visualizes them; an **LLM** reads a
 metric window and reports anomalies. A second track shows **retrieval-augmented
 generation (RAG)** grounding an LLM in real source documents — and a side-by-side
-endpoint demonstrating how the same question answered *without* retrieval goes
-wrong.
+endpoint answering the same question *without* retrieval, for comparison.
 
 Built as an infrastructure/platform portfolio piece. The app is deliberately
 small — the focus is on the engineering around it: supply-chain-hardened CI
@@ -157,8 +156,6 @@ never make network or live-LLM calls — dependencies are stubbed (see
 
 Longer-form design docs live in [`docs/`](docs/):
 
-- [`otel-demo-spec.md`](docs/otel-demo-spec.md) — the observability stack
-- [`otel-demo-llm-analysis-spec.md`](docs/otel-demo-llm-analysis-spec.md) — LLM metrics analysis
 - [`tpr_rag_spec.md`](docs/tpr_rag_spec.md) — the RAG feature, chunking strategy, and HTML-parsing traps
 - [`devcontainer-spec.md`](docs/devcontainer-spec.md) — the sandboxed dev container and firewall
 

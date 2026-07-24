@@ -58,7 +58,7 @@ raw.githubusercontent.com    — raw file content
 objects.githubusercontent.com — Git LFS / release assets
 ```
 
-**Deliberately excluded:** OCI/Terraform domains (`*.ocir.io`, `objectstorage.*.oraclecloud.com`, etc.) — add these only when actually reaching the Terraform/OCI deploy phase; no need to widen the firewall before it's needed. `statsig.anthropic.com`/`statsig.com` — Anthropic's internal telemetry, removed after it caused a DNS-resolution build failure (non-essential to Claude Code functioning).
+**Deliberately excluded:** `statsig.anthropic.com`/`statsig.com` — Anthropic's internal telemetry, removed after it caused a DNS-resolution build failure (non-essential to Claude Code functioning).
 
 ## Known gotchas (hit and fixed during setup)
 
