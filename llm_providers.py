@@ -1,5 +1,11 @@
 import os
 
+from opentelemetry import trace
+
+# Resolved lazily against whatever provider main.py installs, so importing this
+# module before main.py's TracerProvider setup is fine.
+tracer = trace.get_tracer(__name__)
+
 
 def _import_provider_sdk(module_name: str, extra_name: str):
     try:
@@ -14,25 +20,42 @@ def _import_provider_sdk(module_name: str, extra_name: str):
 def _complete_with_groq(prompt: str) -> str:
     Groq = _import_provider_sdk("groq", "groq").Groq
 
+    model = "llama-3.3-70b-versatile"
+    span = trace.get_current_span()
+    span.set_attribute("gen_ai.request.model", model)
+
     client = Groq()
     msg = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=model,
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
     )
+
+    if msg.usage:
+        span.set_attribute("gen_ai.usage.input_tokens", msg.usage.prompt_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", msg.usage.completion_tokens)
+
     return msg.choices[0].message.content
 
 
 def _complete_with_anthropic(prompt: str) -> str:
     Anthropic = _import_provider_sdk("anthropic", "anthropic").Anthropic
 
+    model = "claude-sonnet-4-6"
+    span = trace.get_current_span()
+    span.set_attribute("gen_ai.request.model", model)
+
     client = Anthropic()
     msg = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=model,
         max_tokens=1024,
         thinking={"type": "adaptive"},
         messages=[{"role": "user", "content": prompt}],
     )
+
+    span.set_attribute("gen_ai.usage.input_tokens", msg.usage.input_tokens)
+    span.set_attribute("gen_ai.usage.output_tokens", msg.usage.output_tokens)
+
     return next(block.text for block in msg.content if block.type == "text")
 
 
@@ -52,4 +75,10 @@ def complete(prompt: str) -> str:
             f"Unknown LLM_PROVIDER {provider!r}; supported: {sorted(_PROVIDERS)}"
         ) from None
 
-    return adapter(prompt)
+    # The httpx spans below this show the raw POST; this one adds the part they
+    # can't know — which provider/model ran and what it cost in tokens (set by
+    # the adapter, which is the only thing holding the response object).
+    with tracer.start_as_current_span("llm.complete") as span:
+        span.set_attribute("gen_ai.system", provider)
+        span.set_attribute("gen_ai.prompt.chars", len(prompt))
+        return adapter(prompt)

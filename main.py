@@ -18,6 +18,7 @@ from opentelemetry.exporter.prometheus import PrometheusMetricReader
 
 # --- Auto-instrumentation for FastAPI ---
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -56,6 +57,13 @@ work_duration = meter.create_histogram(
 # --- 3. Create the app and auto-instrument it ---
 app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
+
+# Outbound HTTP spans. FastAPIInstrumentor only covers requests coming *in*;
+# this covers requests going *out* — the Prometheus query_range call in
+# metrics_analysis.py and both LLM SDKs (groq and anthropic are httpx-based),
+# which are otherwise invisible inside a flat server span.
+HTTPXClientInstrumentor().instrument()
+
 app.include_router(rag_router)
 
 

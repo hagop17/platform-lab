@@ -3,11 +3,14 @@ from pathlib import Path
 
 import chromadb
 from dotenv import load_dotenv
+from opentelemetry import trace
 from sentence_transformers import SentenceTransformer
 
 from llm_providers import complete
 
 load_dotenv()  # explicit — don't rely on the runner (fastapi dev, etc.) to load .env
+
+tracer = trace.get_tracer(__name__)
 
 EMBED_MODEL = "all-MiniLM-L6-v2"  # must match ingest.py exactly
 COLLECTION_NAME = "tpr_regulations"
@@ -28,16 +31,28 @@ if _indexed_model and _indexed_model != EMBED_MODEL:
 
 
 def retrieve_relevant_chunks(question: str, k: int = 6) -> list[dict]:
-    question_embedding = _model.encode([question]).tolist()
-    results = _collection.query(query_embeddings=question_embedding, n_results=k)
+    # Embedding and the vector search are both in-process, so no httpx span
+    # covers them — split into two spans to tell "the model is slow" apart from
+    # "the ChromaDB query is slow".
+    with tracer.start_as_current_span("rag.embed") as span:
+        span.set_attribute("rag.embed_model", EMBED_MODEL)
+        question_embedding = _model.encode([question]).tolist()
 
-    if not results["documents"] or not results["documents"][0] or not results["metadatas"]:
-        return []
+    with tracer.start_as_current_span("rag.vector_query") as span:
+        span.set_attribute("rag.k", k)
+        span.set_attribute("rag.collection", COLLECTION_NAME)
+        results = _collection.query(query_embeddings=question_embedding, n_results=k)
 
-    return [
-        {"text": doc, "metadata": meta}
-        for doc, meta in zip(results["documents"][0], results["metadatas"][0])
-    ]
+        if not results["documents"] or not results["documents"][0] or not results["metadatas"]:
+            span.set_attribute("rag.chunks_returned", 0)
+            return []
+
+        chunks = [
+            {"text": doc, "metadata": meta}
+            for doc, meta in zip(results["documents"][0], results["metadatas"][0])
+        ]
+        span.set_attribute("rag.chunks_returned", len(chunks))
+        return chunks
 
 
 # Some CFR subsections (e.g. 1.263(a)-3(k), 53k+ chars) are far larger than
@@ -77,12 +92,17 @@ excerpts support one
 
 
 def answer_repair_question(question: str, k: int = 6) -> dict:
+    span = trace.get_current_span()
+    span.set_attribute("rag.grounded", True)
+
     chunks = retrieve_relevant_chunks(question, k=k)
 
     if not chunks:
+        span.set_attribute("rag.no_context", True)
         return {"answer": "No relevant regulation text found for this question.", "sources": []}
 
     prompt = build_prompt(question, chunks)
+    span.set_attribute("rag.prompt_chars", len(prompt))
 
     # Sub-chunking means several retrieved chunks can share one subsection —
     # dedupe the citations while preserving retrieval order.
