@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Limits GITHUB_TOKEN to read-only. Only actions/checkout uses the token, and it
+# just needs to clone — no step here writes anything back to GitHub.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
