@@ -39,6 +39,13 @@ jobs:
       - name: Format check
         run: uv run ruff format --check .
 
+      - name: Terraform format check
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_wrapper: false
+
+      - run: terraform fmt -check -recursive terraform
+
       - name: Typecheck
         run: uv run pyright
 
