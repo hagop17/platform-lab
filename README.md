@@ -129,7 +129,7 @@ curl -s localhost:8000/api/v1/repair-tax-impact \
 
 ```json
 {
-  "answer": "Classification: capitalize. Replacing an entire roof is a restoration...",
+  "answer": "1. Classification: Capitalize\n2. Safe harbor or BAR-test category: ... the replacement of the entire roof would be considered a restoration of a major component and a substantial structural part of the building under paragraphs (k)(1)(vi) and (k)(2) of section 1.263(a)-3\n3. Specific section(s) cited: 1.263(a)-3(k), specifically paragraphs (e)(2)(ii), (k)(1)(vi), (k)(2), and (k)(6)(ii)(A) and (B)...",
   "sources": ["1.263(a)-3(k)"]
 }
 ```
