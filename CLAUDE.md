@@ -24,6 +24,7 @@ If a task requires reaching a domain not in the allowlist, or requires pushing t
 - **Test:** `uv run pytest` — unit tests live under `tests/`, no `__init__.py` (see `pythonpath = ["."]` in `pyproject.toml`'s `[tool.pytest.ini_options]`, which is what lets tests `import metrics_analysis` / `import rag...` directly).
 - **Install optional LLM provider extra (local dev):** `uv sync --extra anthropic` (see Architecture below)
 - **Build the Docker image with Anthropic support:** `WITH_ANTHROPIC=true docker compose up -d --build` — the `anthropic` extra isn't installed in the image by default (see `Dockerfile`'s `WITH_ANTHROPIC` build arg).
+- **Refresh RAG source text (network, human-run):** `uv run python -m rag.fetch_sources` — rewrites `docs/tpr-sources/` + manifest; review the diff, re-run ingest, run tests, then commit.
 - **Pre-commit hooks:** ruff (`--fix`), ruff-format, pyright, pytest (offline, `HF_HUB_OFFLINE=1`), check-yaml, trailing-whitespace, end-of-file-fixer — all must pass before committing.
 
 ## Architecture
@@ -33,7 +34,7 @@ Flat layout, no `src/`/`app/` package — top-level modules plus a `rag/` packag
 - **`main.py`** — FastAPI app entrypoint. Wires up OpenTelemetry (traces to console via `ConsoleSpanExporter`, metrics to Prometheus pull-model via `PrometheusMetricReader` on port `9464`), mounts `rag_router`, then defines routes (`/` route index, `/health`, `/work`, `/api/v1/analyze`).
 - **`metrics_analysis.py`** — implements `/api/v1/analyze`: queries Prometheus's `query_range` API for a metric window, formats the time series into compact text, then calls `llm_providers.complete()` for anomaly/trend analysis.
 - **`llm_providers.py`** — the shared LLM dispatch layer (see below). Used by both `metrics_analysis.py` and `rag/`.
-- **`rag/`** — tangible-property-regulations RAG demo. `rag/ingest.py` scrapes/chunks CFR + IRS FAQ pages into a persistent ChromaDB collection; `rag/tpr_rag.py` embeds a question, retrieves matching chunks, and builds the grounded prompt; `rag/router.py` exposes `/api/v1/repair-tax-impact` (RAG-grounded) and `/api/v1/repair-tax-impact-no-rag` (same question sent straight to the LLM, for comparison).
+- **`rag/`** — tangible-property-regulations RAG demo. `rag/fetch_sources.py` is the only network-touching module: it pulls CFR sections (eCFR versioner API XML) and the IRS FAQ (HTML) and writes them, verbatim, to the committed `docs/tpr-sources/` snapshot with a sha256 manifest. `rag/ingest.py` parses that snapshot fully offline (stdlib `xml.etree.ElementTree` for the CFR XML, BeautifulSoup for the IRS FAQ), chunks it, and builds a persistent ChromaDB collection; `rag/tpr_rag.py` embeds a question, retrieves matching chunks, and builds the grounded prompt; `rag/router.py` exposes `/api/v1/repair-tax-impact` (RAG-grounded) and `/api/v1/repair-tax-impact-no-rag` (same question sent straight to the LLM, for comparison).
 
 ### Pluggable LLM provider
 
@@ -53,6 +54,7 @@ Prometheus scrapes `app:9464` continuously in the background (every 5s per `prom
 - Use `monkeypatch` (pytest's built-in fixture) to stub functions/dependencies, not `unittest.mock` — no extra import, auto-reverts per-test, and nothing here needs call-count/argument assertions that would justify `Mock`'s extra ceremony.
 - Use `@pytest.mark.parametrize` (with explicit `id=` per case) when multiple test cases share the same call-and-assert shape and only the input/output data differs — one function, one `assert`, many data rows. Reach for separate `test_*` functions instead when the setup or the behavior under test genuinely differs between cases.
 - `rag/tpr_rag.py` loads `SentenceTransformer`/`ChromaDB` at *import time* (not lazily), so any test that imports it risks a network download on a machine with a cold Hugging Face cache. `tests/test_tpr_rag.py` guards this with a module-level `pytest.skip(..., allow_module_level=True)` if the model isn't already cached — follow that pattern rather than importing it unconditionally.
+- `rag/ingest.py`'s heavy imports (`chromadb`, `sentence_transformers`) are lazy — imported inside `build_index()`, not at module level — so `tests/test_ingest.py` imports `rag.ingest` directly to test the chunking functions and needs **no** skip guard. This is a deliberate asymmetry with `tests/test_tpr_rag.py` above: `rag/tpr_rag.py` still loads the model at import time (it needs a live model handle for every query), so its guard stays required.
 
 ## Environment variables
 
@@ -62,13 +64,15 @@ Set in `.env` (gitignored) — loaded by `docker-compose.yml` into the `app` ser
 - `ANTHROPIC_API_KEY` — required only if `LLM_PROVIDER=anthropic`.
 - `LLM_PROVIDER` — `groq` (default) or `anthropic`.
 - `WITH_ANTHROPIC` — Docker build arg (not a runtime var), `false` by default; set `true` to install the `anthropic` extra in the image (see Toolchain & commands above).
-- `TPR_RAG_DATA_DIR` — optional; where the RAG feature's ChromaDB index lives (`rag/ingest.py`, `rag/tpr_rag.py`). Defaults to `~/.tpr-rag/chroma_data`, deliberately outside the repo. In Docker, `docker-compose.yml` sets this to `/home/appuser/.tpr-rag/chroma_data` (the app container runs as a non-root `appuser`, uid 1000 — see `Dockerfile`) and bind-mounts the host's `~/.tpr-rag/chroma_data` into it — see `docs/tpr_rag_spec.md` for the full rationale.
+- `TPR_RAG_DATA_DIR` — optional; where the RAG feature's ChromaDB index lives (`rag/ingest.py`, `rag/tpr_rag.py`). Still defaults to `~/.tpr-rag/chroma_data` for local (non-Docker) dev, deliberately outside the repo. In Docker, the index is **built into the image** at `/home/appuser/.tpr-rag/chroma_data` during `docker build` (`rag/ingest.py` runs at build time against the committed `docs/tpr-sources/` snapshot) — `docker-compose.yml` sets `TPR_RAG_DATA_DIR` to the same path so the runtime read matches the build-time write; there is no host bind mount — see `docs/tpr_rag_spec.md` for the full rationale.
 
 ## Gotchas
 
 - **`Dockerfile` installs deps via `uv sync --frozen`** (not a manually maintained `pip install` list) — `pyproject.toml`/`uv.lock` are copied in and installed before app code, so dependency changes there are picked up automatically; no separate list to keep in sync.
 - **`torch` is pinned to the CPU-only wheel index** (`[tool.uv.index]`/`[tool.uv.sources]` in `pyproject.toml`, Linux only) — this app never does GPU inference (`sentence-transformers` for RAG embeddings), so this avoids pulling several GB of unused CUDA libraries. If `uv sync` ever starts pulling the CUDA build again, check this override still matches the current `torch` version constraints.
 - **The RAG embedding model is baked into the Docker image at build time** (`Dockerfile`, right after `uv sync`) so container startup never depends on Hugging Face Hub being reachable. This means image builds now have a one-time network dependency on HF Hub that didn't exist before RAG was added.
+- **`docs/tpr-sources/` files are build inputs, not reference data.** `rag/ingest.py` parses them to produce the ChromaDB index that ships in the image and answers user queries, so refreshing them (`rag/fetch_sources.py`) changes retrieval results with no human in the loop. `tests/test_manifest.py` is what keeps them honest — it recomputes each file's sha256 against `_manifest.json` and fails if a source file and its manifest entry ever drift apart.
+- **`chunk_cfr_xml`'s subsection boundary rule needs *both* signals.** A paragraph only opens a new top-level subsection if its marker is the next expected letter in sequence *and* it's immediately followed by an italic topic title (`_subsection_start` in `rag/ingest.py`). Weakening either check alone silently drops or truncates a subsection — see `docs/tpr_rag_spec.md` for the verified trace table this was validated against.
 - Ruff `target-version = "py311"` even though `requires-python = ">=3.12"`.
 - `.gitignore` references `data/`, `*.db`, `.terraform/`, `*.tfstate*` — likely relevant for future data store / infra work, not currently used.
 - `docs/` holds two design docs: `tpr_rag_spec.md` (RAG design + post-build findings) and `devcontainer-spec.md` (sandboxed dev container). Two earlier planning specs (`otel-demo-spec.md`, `otel-demo-llm-analysis-spec.md`) were deleted as stale/superseded — don't reference them.
