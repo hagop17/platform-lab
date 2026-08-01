@@ -52,6 +52,8 @@ vscode.blob.core.windows.net — VS Code Server download (GUI use only)
 update.code.visualstudio.com — VS Code Server version check (GUI use only)
 pypi.org                     — Python package metadata
 files.pythonhosted.org       — Python package downloads
+www.ecfr.gov                 — RAG corpus source (eCFR versioner API), rag/fetch_sources.py only
+www.irs.gov                  — RAG corpus source (IRS FAQ page), rag/fetch_sources.py only
 github.com                   — clone/fetch, public repos
 api.github.com               — GitHub API (gh CLI, WebFetch on repo metadata)
 raw.githubusercontent.com    — raw file content
@@ -59,6 +61,8 @@ objects.githubusercontent.com — Git LFS / release assets
 ```
 
 **Deliberately excluded:** `statsig.anthropic.com`/`statsig.com` — Anthropic's internal telemetry, removed after it caused a DNS-resolution build failure (non-essential to Claude Code functioning).
+
+**Caveat on the two RAG source hosts:** this script resolves each name **once at container start** and pins the resulting IPs. `www.ecfr.gov` is AWS Global Accelerator (static anycast IPs — stable). `www.irs.gov` is Akamai with a ~20s TTL; its edge IPs have been stable in practice, but if a fetch ever fails with a *connection* error rather than an HTTP error, re-run `sudo /usr/local/bin/init-firewall.sh` to re-resolve. No rebuild needed.
 
 ## Known gotchas (hit and fixed during setup)
 
@@ -152,6 +156,22 @@ devcontainer exec --workspace-folder $(pwd) tmux attach -t claude-session
 ```
 
 This is the right choice for genuinely unattended work — the process never stops, so there's no "resume" needed. `--continue`/`--resume` is the fallback for when a session did end (crash, accidental exit, closed terminal without tmux); tmux is what prevents that from happening in the first place.
+
+## Known limitations (by design — do not "fix" these from inside)
+
+These are consequences of the containment boundary, not bugs. An agent hitting one should surface it as a blocker and hand the step to the host, rather than working around it.
+
+**No Docker daemon.** No socket is mounted and no docker-in-docker feature is enabled, so `docker build`, `docker compose build`, and `docker compose up` do not work in here.
+
+*Why not fixed:* mounting `/var/run/docker.sock` is root-equivalent on the **host** — an agent could `docker run -v /:/host` and walk straight out, making the firewall decorative. Docker-in-docker avoids that but needs `--privileged` plus ~6 registry/CDN domains allowlisted, weakening the boundary to test the boundary. Image builds are a CI activity anyway: the AWS design has GitHub Actions build and push to ECR, never a developer machine and never the instance.
+
+*What to do instead:* write the `Dockerfile` / `docker-compose.yml` change here, verify what's checkable statically (path alignment between `ENV TPR_RAG_DATA_DIR` and compose, `COPY`/`RUN` ordering, `docker compose config` if the CLI exists), then hand the human the exact build commands and treat their output as the test evidence.
+
+**No `git push`.** No write-capable credential exists in here (see *Key decisions*). Pushes fail on authentication, not connectivity. Push from the host terminal.
+
+**Any domain outside the allowlist is unreachable.** Failures surface as ICMP `admin-prohibited` rejections — fast and unambiguous, not timeouts. Treat a connection error as a firewall result, not an application bug, and check the allowlist before debugging code.
+
+**The two RAG source hosts are pinned at container start.** See the caveat under *Firewall allowlist*; re-run `init-firewall.sh` if `www.irs.gov` ever rotates out from under you.
 
 ## Remaining hardening not yet done (candidates for revisit)
 

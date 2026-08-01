@@ -67,7 +67,18 @@ ipset create allowed-domains hash:net
 #    ipset add allowed-domains "$cidr" -exist
 #done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
-# Resolve and add other allowed domains
+# Resolve and add other allowed domains.
+#
+# www.ecfr.gov / www.irs.gov are the RAG corpus sources, needed only by
+# rag/fetch_sources.py — a deliberate, human-run refresh step, not the build.
+# rag/ingest.py reads the committed snapshot in docs/tpr-sources/ and stays
+# offline, so nothing routine depends on these two being reachable.
+#
+# Caveat: this script resolves each name ONCE at container start and pins the
+# resulting IPs. www.ecfr.gov is AWS Global Accelerator (static anycast IPs, so
+# stable), but www.irs.gov is Akamai with a ~20s TTL. Its edge IPs have been
+# stable in practice, but if a fetch ever fails with a connection error rather
+# than an HTTP error, re-run this script to re-resolve — no rebuild needed.
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
@@ -78,6 +89,8 @@ for domain in \
     "update.code.visualstudio.com" \
     "pypi.org" \
     "files.pythonhosted.org"\
+    "www.ecfr.gov" \
+    "www.irs.gov" \
     "github.com" \
     "api.github.com" \
     "raw.githubusercontent.com" \
