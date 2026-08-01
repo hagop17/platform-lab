@@ -59,8 +59,10 @@ uv add chromadb sentence-transformers python-dotenv beautifulsoup4
 - `python-dotenv` — see the `.env` loading note below.
 
 `python-dotenv` is required because `rag/ingest.py` is normally run directly
-(`python rag/ingest.py`), which does **not** automatically load `.env` the
-way `uv run fastapi dev` does. Both `rag/ingest.py` and `rag/tpr_rag.py`
+(`uv run python -m rag.ingest` — it must be run as a module, not as a bare
+script path, since it does `from rag.fetch_sources import ...`), which does
+**not** automatically load `.env` the way `uv run fastapi dev` does. Both
+`rag/ingest.py` and `rag/tpr_rag.py`
 call `load_dotenv()` explicitly (see code below) so `TPR_RAG_DATA_DIR` and
 `ANTHROPIC_API_KEY` resolve identically no matter which entry point is
 used — otherwise the two scripts could silently disagree on where the
@@ -630,7 +632,7 @@ from both of the above.
 
 ## Verification steps
 
-1. Run `python rag/ingest.py` — confirm it prints a nonzero chunk count and
+1. Run `uv run python -m rag.ingest` — confirm it prints a nonzero chunk count and
    `~/.tpr-rag/chroma_data/` (or `$TPR_RAG_DATA_DIR` if set) is created with
    files in it — not anywhere inside the repo
 2. (Re)start the FastAPI app **after** ingestion completes — don't run
