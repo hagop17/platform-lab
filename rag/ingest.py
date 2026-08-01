@@ -1,5 +1,7 @@
 import os
 import re
+import string
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import chromadb
@@ -155,6 +157,143 @@ def _pack(paragraphs: list[str], limit: int = SUBCHUNK_CHARS) -> list[str]:
     if buf:
         sub_chunks.append("\n".join(buf))
     return sub_chunks
+
+
+def _flatten(elem: ET.Element) -> str:
+    """Collapse an element's mixed content to one whitespace-normalized string.
+
+    <P>(a) <I>Overview.</I> This section…  ->  "(a) Overview. This section…"
+    and the italic-digit form (<I>1</I>) -> "(1)".
+
+    <EXAMPLE> is the exception: it wraps <HED> + <PSPACE> as separate children
+    with no whitespace between them, so a flat itertext() fuses the heading's
+    last word to the body's first ("...rolling stockX is a railroad..."). Join
+    its children individually instead.
+    """
+    if elem.tag == "EXAMPLE":
+        return " ".join(part for part in (_flatten(child) for child in elem) if part)
+    return " ".join("".join(elem.itertext()).split())
+
+
+# A top-level subsection opens with the marker as the paragraph's own leading
+# text — "(a)", "(b)", ... — with nothing before the italic title element.
+_TOP_LEVEL_MARKER = re.compile(r"^\(([a-z])\)$")
+
+# The eCFR section XML is structurally FLAT: 1.263(a)-3 is 141 sibling <P>
+# elements under one <DIV8>, with subsection hierarchy encoded in paragraph
+# *text*, not in nesting. So boundaries have to be detected, not traversed.
+# Only <P> can open a subsection; <EXAMPLE> is body content (117 of them in
+# 1.263(a)-3 — worked repair-vs-capitalize scenarios, valuable to retrieve).
+# <HEAD> is the section title and <CITA> the trailing authority line; both are
+# publication metadata, not regulation text.
+_CONTENT_TAGS = ("P", "EXAMPLE")
+
+
+def _subsection_start(elem: ET.Element, expected_letter: str) -> tuple[str, str] | None:
+    """Return (letter, topic) if this element opens `expected_letter`, else None.
+
+    "(i)" is ambiguous — it is both subsection (i), the routine maintenance
+    safe harbor, and the roman numeral *one* in nested markers like (e)(2)(i).
+    Measured against the real 1.263(a)-3, neither available signal is
+    sufficient alone:
+
+      - Sequence alone fails: the first "(i)" after "(h)" is a nested paragraph
+        opening "2 percent of the unadjusted basis", not the subsection.
+      - Italic title alone fails: "(v) Leased building" and "(i) Routine
+        maintenance for buildings" both carry italic titles but are nested.
+
+    So require BOTH: the marker is the next expected letter in sequence, AND it
+    is immediately followed by an italic topic title. Run to completion this
+    accepts exactly (a)-(r) in 1.263(a)-3, once each, and rejects all six
+    nested "(i)" paragraphs and all three stray "(v)" paragraphs.
+
+    The italic check is structural, not textual: `elem.text` is the string
+    *before* the first child, so requiring it to be exactly "(x)" and the first
+    child to be <I> pins the title to the position right after the marker. A
+    regex over the flattened text would also match a paragraph whose italics
+    appear somewhere in the middle.
+    """
+    if elem.tag != "P":
+        return None
+
+    children = list(elem)
+    if not children or children[0].tag != "I":
+        return None
+
+    match = _TOP_LEVEL_MARKER.match((elem.text or "").strip())
+    if match is None or match.group(1) != expected_letter:
+        return None
+
+    # Trailing period is a typesetting convention ("Overview."); strip it so
+    # `topic` reads the same as the Cornell-era metadata did.
+    topic = " ".join("".join(children[0].itertext()).split()).rstrip(".")
+    return match.group(1), topic
+
+
+def chunk_cfr_xml(xml_bytes: bytes, source_label: str) -> list[dict]:
+    """Chunk one eCFR section XML file into embedding-window-sized pieces.
+
+    Walks the <DIV8 TYPE="SECTION"> children in document order, opening a new
+    subsection at each accepted boundary and accumulating everything else —
+    including <EXAMPLE> blocks — into whichever subsection is currently open.
+    Each body then goes through _pack for embedding-window sizing.
+    """
+    root = ET.fromstring(xml_bytes)  # noqa: S314 - committed, sha256-pinned local file
+    section = root if root.tag == "DIV8" else root.find(".//DIV8[@TYPE='SECTION']")
+    if section is None:
+        raise ValueError(
+            f"{source_label}: no <DIV8 TYPE='SECTION'> element found. The eCFR "
+            "response format has changed, or this file is not a section export."
+        )
+
+    subsections: list[dict] = []
+    current: dict | None = None
+    for elem in section:
+        if elem.tag not in _CONTENT_TAGS:
+            continue
+
+        expected = string.ascii_lowercase[len(subsections)] if len(subsections) < 26 else None
+        start = _subsection_start(elem, expected) if expected else None
+        if start is not None:
+            letter, topic = start
+            current = {"letter": letter, "topic": topic, "body": [_flatten(elem)]}
+            subsections.append(current)
+            continue
+
+        if current is not None:  # text before (a), if any, has no home — skip it
+            current["body"].append(_flatten(elem))
+
+    if not subsections:
+        # Fail loudly rather than contribute 0 chunks: an empty index still
+        # answers HTTP 200 (get_or_create_collection creates rather than raises),
+        # so silence here would surface as confidently sourceless answers.
+        raise ValueError(
+            f"{source_label}: found 0 top-level subsections. The boundary rule no "
+            "longer matches this document's markup — inspect the XML before "
+            "rebuilding the index."
+        )
+
+    chunks = []
+    for sub in subsections:
+        header = f"({sub['letter']}) {sub['topic']}".strip()
+        for part_idx, sub_text in enumerate(_pack(sub["body"])):
+            # Prefix continuation pieces with the subsection header so each
+            # sub-chunk is self-describing when retrieved in isolation (the
+            # first piece already opens with the header text).
+            text = sub_text if part_idx == 0 else f"[{header} (continued)]\n{sub_text}"
+            chunks.append(
+                {
+                    "text": text,
+                    "metadata": {
+                        "source": source_label,
+                        "subsection": sub["letter"],
+                        "topic": sub["topic"],
+                        "part": part_idx,
+                    },
+                }
+            )
+
+    return chunks
 
 
 def chunk_cfr_page(html: str, source_label: str, wanted_subsections: set[str]) -> list[dict]:
