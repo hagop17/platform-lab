@@ -1,0 +1,8 @@
+# The committed RAG source snapshot is byte-checksummed: docs/tpr-sources/_manifest.json
+# records a sha256 per file, and tests/test_manifest.py recomputes them on every run.
+#
+# Git would otherwise treat these XML/HTML files as text and normalize line endings on
+# checkout — on Windows (core.autocrlf=true by default in Git for Windows) LF becomes
+# CRLF, the bytes change, and every checksum fails. -text disables that conversion so a
+# checkout is byte-identical to what rag/fetch_sources.py wrote on any platform.
+docs/tpr-sources/** -text
