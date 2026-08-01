@@ -582,6 +582,28 @@ once actually built and run against live data:
   default retrieval `k` was raised `4 → 6` for coverage (still well within
   the rate limit at ~1k chars/chunk).
 
+- **The eCFR migration changed the corpus size and shape.** Note the ~300-chunk
+  figure above describes the *Cornell-era* index. Moving to committed eCFR XML
+  took it to **467 chunks**: `1.263(a)-1` 49, `1.263(a)-2` 47, `1.263(a)-3` 317,
+  `1.162-4` 3, IRS FAQ 51. Two CFR sections are new to the corpus, and
+  `1.263(a)-3` now yields all 18 subsections `(a)`–`(r)` rather than the five
+  the Cornell parser could anchor — recovering `(i)`, the routine-maintenance
+  safe harbor, which had been absent entirely.
+
+- **Finer chunking lets a single subsection dominate `k=6`.** Measured against
+  the rebuilt index across four questions: *"I replaced the entire roof on a
+  rental property"* returns **1** distinct source (all six chunks land in `(k)`
+  "Capitalization of restorations"), while *"$400 appliance, can I deduct it?"*
+  returns **6** (spanning three IRS FAQ entries, `1.263(a)-1(a)`, and
+  `1.162-4(a)`), *"routine HVAC maintenance"* returns **4** (including the
+  recovered `(i)`), and *"repainted and patched drywall"* returns **2**. So
+  concentration is question-specific rather than systemic — a whole-roof
+  replacement genuinely *is* squarely a `(k)` restoration, and the answer still
+  cites precise nested paragraphs (`(k)(1)(vi)`, `(k)(2)`, `(e)(2)(ii)`). Worth
+  knowing when choosing README/demo examples: the roof question is a weaker
+  showcase post-migration than it was before, because a one-element `sources`
+  array understates the grounding. The HVAC question demonstrates more.
+
 ## Test results: RAG vs. no-RAG comparison
 
 Run against the live endpoint to confirm retrieval-augmentation actually
