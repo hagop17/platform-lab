@@ -1,0 +1,74 @@
+{
+  "description": "Committed source text for the tangible-property RAG index. These files are BUILD INPUTS, not reference data: rag/ingest.py parses them to produce the ChromaDB index that ships in the Docker image and answers user queries. A refresh therefore propagates to retrieval results with no human in the loop.",
+  "integrity_note": "Refreshing is not free. A re-pull can shift chunk boundaries, drop a subsection if eCFR restructures its markup, or — if a fetch silently returns an error page — yield an empty index that still answers HTTP 200 with no sources. Always review `git diff docs/tpr-sources/`, rebuild the index, and run the tests before committing a refresh.",
+  "verify_command": "uv run pytest tests/test_manifest.py",
+  "generated_by": "uv run python -m rag.fetch_sources",
+  "pulled_on": "2026-07-31",
+  "ecfr": {
+    "source": "eCFR — Office of the Federal Register / GPO",
+    "api_base": "https://www.ecfr.gov/api/versioner/v1",
+    "endpoint_pattern": "/full/{issue_date}/title-26.xml?part=1&section={section}",
+    "ecfr_issue_date": "2026-07-24",
+    "ecfr_up_to_date_as_of": "2026-07-30"
+  },
+  "files": {
+    "1.263(a)-1.xml": {
+      "source": "eCFR",
+      "citation": "26 CFR 1.263(a)-1",
+      "title": "Capital expenditures; in general",
+      "covers": "General rule for capital expenditures and the de minimis safe harbor",
+      "url": "https://www.ecfr.gov/api/versioner/v1/full/2026-07-24/title-26.xml?part=1&section=1.263%28a%29-1",
+      "web_view": "https://www.ecfr.gov/current/title-26/section-1.263(a)-1",
+      "bytes": 39312,
+      "sha256": "95d45002ffe8ea47240ddc18e86feb76b2d08a5c3fcd3c423561b0472b9b77d5"
+    },
+    "1.263(a)-2.xml": {
+      "source": "eCFR",
+      "citation": "26 CFR 1.263(a)-2",
+      "title": "Amounts paid to acquire or produce tangible property",
+      "covers": "Acquisition/production costs — supports separate-asset questions",
+      "url": "https://www.ecfr.gov/api/versioner/v1/full/2026-07-24/title-26.xml?part=1&section=1.263%28a%29-2",
+      "web_view": "https://www.ecfr.gov/current/title-26/section-1.263(a)-2",
+      "bytes": 36106,
+      "sha256": "5f6ce7d94408026d07e163a3b37fd340828e6e9f344372137846e5db61c009ec"
+    },
+    "1.263(a)-3.xml": {
+      "source": "eCFR",
+      "citation": "26 CFR 1.263(a)-3",
+      "title": "Amounts paid to improve tangible property",
+      "covers": "Core betterment/adaptation/restoration test, unit of property, routine maintenance safe harbor",
+      "url": "https://www.ecfr.gov/api/versioner/v1/full/2026-07-24/title-26.xml?part=1&section=1.263%28a%29-3",
+      "web_view": "https://www.ecfr.gov/current/title-26/section-1.263(a)-3",
+      "bytes": 245744,
+      "sha256": "54a44c43b83e1beba44061bfbf50ca1a2395e6ce67b1193ce6a4483296dba28a"
+    },
+    "1.162-4.xml": {
+      "source": "eCFR",
+      "citation": "26 CFR 1.162-4",
+      "title": "Repairs",
+      "covers": "The deduction side — counterpart to capitalization",
+      "url": "https://www.ecfr.gov/api/versioner/v1/full/2026-07-24/title-26.xml?part=1&section=1.162-4",
+      "web_view": "https://www.ecfr.gov/current/title-26/section-1.162-4",
+      "bytes": 1958,
+      "sha256": "2079d763e91124c6c7e2f6fc5b2391143d46b716c7ec5c9c1ba20a4e35643c03"
+    },
+    "irs-faq.html": {
+      "source": "IRS",
+      "citation": "IRS, Tangible Property Final Regulations (FAQ)",
+      "title": "Tangible Property Final Regulations",
+      "covers": "Plain-language election mechanics and procedures",
+      "url": "https://www.irs.gov/businesses/small-businesses-self-employed/tangible-property-final-regulations",
+      "web_view": "https://www.irs.gov/businesses/small-businesses-self-employed/tangible-property-final-regulations",
+      "bytes": 153804,
+      "sha256": "cb09bc7d839511f83d16e390c9cbc865345c051208613c84cbfe1760054dfc04",
+      "provenance_note": "Weaker provenance than the XML: this page is unversioned. It has no issue date and no API, so 'pulled_on' is the only thing pinning it in time and its content can change silently between pulls."
+    }
+  },
+  "reimport_notes": [
+    "The issue date must be discovered from /titles.json, not guessed — the /full/ endpoint returns HTTP 404 for any date that is not a real issue date.",
+    "The versioner API (ecfr.gov/api/versioner/v1/...) serves plain scripted clients. The ecfr.gov WEBSITE (ecfr.gov/current/...) returns a bot-check page. An earlier evaluation tested the website and wrongly concluded eCFR was unscriptable.",
+    "Response bytes are written verbatim, never parsed and reserialized, so each sha256 describes exactly what the API returned.",
+    "The fetch is atomic: every source is retrieved and validated in memory before any file is written, so a failure leaves the last-good snapshot intact.",
+    "1.168(i)-8 (partial dispositions) and 1.168(a)-1 (MACRS) are excluded on purpose. Retrieval returns a fixed k=6 chunks; off-topic material would compete for those slots."
+  ]
+}
