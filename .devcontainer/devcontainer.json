@@ -39,7 +39,18 @@
   "remoteUser": "node",
   "mounts": [
     "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
-    "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume"
+    "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume",
+    // The RAG embedding model (all-MiniLM-L6-v2), shared from the host cache.
+    // huggingface.co is deliberately NOT allowlisted in init-firewall.sh, and the
+    // container's own $HOME is fresh, so without this rag/ingest.py cannot load an
+    // embedder at all. READONLY is load-bearing, not caution: a writable shared cache
+    // would be a write channel out of the sandbox — .bin weights are pickle-based, so
+    // a blob poisoned in here would execute on the HOST the next time something
+    // deserializes it. Read-only, HF never writes: it only writes when *populating*
+    // a cache (downloads, .locks, refs), never when reading an already-cached model.
+    // Consequence: only models already warm on the host are usable. If EMBED_MODEL
+    // ever changes, warm it on the host first.
+    "source=${localEnv:HOME}/.cache/huggingface,target=/home/node/.cache/huggingface,type=bind,readonly"
   ],
   "remoteEnv": {
     "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}",
@@ -48,7 +59,13 @@
   "containerEnv": {
     "NODE_OPTIONS": "--max-old-space-size=4096",
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
-    "TERM": "xterm-256color"
+    "TERM": "xterm-256color",
+    // huggingface.co is firewalled off, so every hub revision check is a guaranteed
+    // failure. Skip it: load straight from the read-only cache mounted above. Not
+    // required for correctness (the firewall REJECTs rather than DROPs, so blocked
+    // calls fail fast instead of hanging) — it just removes a pointless failed request
+    // and warning on every model load, and matches how pre-commit already runs pytest.
+    "HF_HUB_OFFLINE": "1"
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",

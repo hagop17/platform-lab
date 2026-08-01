@@ -40,6 +40,18 @@ A firewall can't distinguish `git pull` from `git push` — both are the same ne
 ```
 `containerEnv` values are visible via `docker inspect`; `remoteEnv` only injects into the actual session, so it doesn't sit in container metadata. Both keys are forwarded from the host shell's environment (`localEnv`) — separate from the app's own `.env` file, which is only read when the app runs via `load_dotenv()` (e.g. inside `docker compose`, where `.env` is picked up directly by Compose).
 
+**RAG embedding model — read-only bind of the host's Hugging Face cache:**
+```jsonc
+"source=${localEnv:HOME}/.cache/huggingface,target=/home/node/.cache/huggingface,type=bind,readonly"
+```
+`rag/ingest.py` needs `all-MiniLM-L6-v2` to embed chunks, but `huggingface.co` is firewalled off and the container's `$HOME` is fresh — so without this, no embedder can load at all. The alternative was allowlisting the hub, which would let an autonomous agent pull arbitrary models.
+
+`readonly` is load-bearing rather than mere caution. A *writable* shared cache would be a write channel out of the sandbox: `.bin` weights are pickle-based, so a blob poisoned inside the container would execute on the **host** the next time anything deserialized it — defeating the container's whole purpose. It also removes the risk of the container corrupting or filling an 88 MB cache that every host project shares.
+
+Read-only is sufficient because HuggingFace only writes when *populating* a cache (downloads, `.locks/`, `refs/`), never when reading an already-cached model. Verified directly: with the cache copied and `chmod -R a-w`, `SentenceTransformer('all-MiniLM-L6-v2')` loads and encodes fine, both with and without `HF_HUB_OFFLINE=1`.
+
+`"HF_HUB_OFFLINE": "1"` is set in `containerEnv` to skip hub revision checks that are guaranteed to fail behind the firewall. Not required for correctness — the firewall REJECTs rather than DROPs, so blocked calls fail fast instead of hanging — it just removes a pointless failed request and warning per model load.
+
 ## Firewall allowlist (current)
 
 ```
@@ -61,6 +73,8 @@ objects.githubusercontent.com — Git LFS / release assets
 ```
 
 **Deliberately excluded:** `statsig.anthropic.com`/`statsig.com` — Anthropic's internal telemetry, removed after it caused a DNS-resolution build failure (non-essential to Claude Code functioning).
+
+**Deliberately excluded:** `huggingface.co` — the RAG embedding model is supplied by a read-only mount of the host cache instead (see *Key decisions*). Allowlisting the hub would let an autonomous agent pull arbitrary models; the mount grants exactly one capability, reading weights already vetted on the host.
 
 **Caveat on the two RAG source hosts:** this script resolves each name **once at container start** and pins the resulting IPs. `www.ecfr.gov` is AWS Global Accelerator (static anycast IPs — stable). `www.irs.gov` is Akamai with a ~20s TTL; its edge IPs have been stable in practice, but if a fetch ever fails with a *connection* error rather than an HTTP error, re-run `sudo /usr/local/bin/init-firewall.sh` to re-resolve. No rebuild needed.
 
@@ -166,6 +180,12 @@ These are consequences of the containment boundary, not bugs. An agent hitting o
 *Why not fixed:* mounting `/var/run/docker.sock` is root-equivalent on the **host** — an agent could `docker run -v /:/host` and walk straight out, making the firewall decorative. Docker-in-docker avoids that but needs `--privileged` plus ~6 registry/CDN domains allowlisted, weakening the boundary to test the boundary. Image builds are a CI activity anyway: the AWS design has GitHub Actions build and push to ECR, never a developer machine and never the instance.
 
 *What to do instead:* write the `Dockerfile` / `docker-compose.yml` change here, verify what's checkable statically (path alignment between `ENV TPR_RAG_DATA_DIR` and compose, `COPY`/`RUN` ordering, `docker compose config` if the CLI exists), then hand the human the exact build commands and treat their output as the test evidence.
+
+**Only Hugging Face models already warm on the host are usable.** The cache is mounted read-only and `huggingface.co` is blocked, so nothing new can be pulled.
+
+*Why not fixed:* see the read-only mount rationale in *Key decisions*. This is arguably a feature — the sandbox cannot silently acquire arbitrary model weights.
+
+*What to do instead:* if `EMBED_MODEL` ever changes, warm the new model on the host first (`uv run python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('<name>')"`), then restart the container.
 
 **No `git push`.** No write-capable credential exists in here (see *Key decisions*). Pushes fail on authentication, not connectivity. Push from the host terminal.
 
