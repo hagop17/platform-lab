@@ -144,3 +144,36 @@ def test_chunk_metadata_shape_is_unchanged():
     assert set(chunk) == {"text", "metadata"}
     assert set(chunk["metadata"]) == {"source", "subsection", "topic", "part"}
     assert chunk["metadata"]["source"] == "1.162-4"
+
+
+def test_irs_faq_chunks_from_the_committed_html_file():
+    """chunk_irs_faq's BeautifulSoup logic is unchanged — it just reads the
+    committed file now instead of an httpx response body."""
+    from rag.fetch_sources import IRS_FAQ_FILENAME
+    from rag.ingest import chunk_irs_faq
+
+    chunks = chunk_irs_faq((SOURCES_DIR / IRS_FAQ_FILENAME).read_text(encoding="utf-8"))
+
+    assert chunks
+    assert all(c["metadata"]["source"] == "IRS FAQ" for c in chunks)
+    assert all(len(c["text"]) <= SUBCHUNK_CHARS + 200 for c in chunks)
+
+
+def test_ingest_does_not_import_chromadb_or_the_embedder_at_module_level():
+    """chromadb and sentence_transformers must be imported lazily inside
+    build_index(). That's what lets this file import rag.ingest without the
+    cold-HF-cache skip guard that tests/test_tpr_rag.py needs — keep it that way.
+
+    Asserted against rag.ingest's own namespace, deliberately, NOT against
+    sys.modules: tests/test_tpr_rag.py imports rag.tpr_rag, which loads
+    SentenceTransformer (and therefore torch) at import time. A sys.modules
+    assertion would pass or fail purely on test collection order — green by
+    accident in a default run, red the moment someone runs the two files in
+    the other order.
+    """
+    import rag.ingest
+
+    assert not hasattr(rag.ingest, "SentenceTransformer")
+    assert not hasattr(rag.ingest, "chromadb")
+    assert not hasattr(rag.ingest, "NotFoundError")
+    assert not hasattr(rag.ingest, "httpx")  # the network moved to fetch_sources.py

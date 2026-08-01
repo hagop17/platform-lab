@@ -4,12 +4,10 @@ import string
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import chromadb
-import httpx
 from bs4 import BeautifulSoup
-from chromadb.errors import NotFoundError
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
+
+from rag.fetch_sources import CFR_SECTIONS, IRS_FAQ_FILENAME, SOURCES_DIR
 
 load_dotenv()  # explicit — don't rely on the runner (fastapi dev, etc.) to load .env
 
@@ -17,87 +15,6 @@ EMBED_MODEL = "all-MiniLM-L6-v2"  # same model used at query time, must match
 COLLECTION_NAME = "tpr_regulations"
 # Outside the repo by default — survives repo deletion/reclone, never git-tracked.
 CHROMA_PATH = Path(os.environ.get("TPR_RAG_DATA_DIR", Path.home() / ".tpr-rag" / "chroma_data"))
-
-# Confirmed by directly fetching each URL and inspecting the real HTML (see
-# docs/tpr_rag_spec.md "Confirmed HTML structure" / "Source selection" sections).
-# eCFR.gov was tried first and rejected: it blocks plain scripted requests
-# (returns a bot-check page), whereas Cornell LII responds with real content.
-SOURCES = {
-    "1.263(a)-1": {
-        "url": "https://www.law.cornell.edu/cfr/text/26/1.263(a)-1",
-        "subsections": {"a", "f"},  # (a) general rule, (f) de minimis safe harbor
-    },
-    "1.263(a)-3": {
-        "url": "https://www.law.cornell.edu/cfr/text/26/1.263(a)-3",
-        # (i) intentionally excluded: confirmed by direct inspection that
-        # this page has no distinct top-level "(i)" heading paragraph the
-        # way (h)/(j)/(k)/(l) have. The routine-maintenance safe-harbor
-        # text is nested three levels deep inside (h)'s body with no
-        # stable top-level anchor; the only id="i" element on the whole
-        # page is an unrelated nested list item under (h)(5) (even
-        # Cornell's own "#i" cross-reference links resolve to it). See
-        # docs/tpr_rag_spec.md "Confirmed HTML structure" for the full trace.
-        "subsections": {"d", "h", "j", "k", "l"},
-    },
-}
-IRS_FAQ_URL = "https://www.irs.gov/businesses/small-businesses-self-employed/tangible-property-final-regulations"
-
-
-def fetch_page(url: str) -> str:
-    resp = httpx.get(
-        url,
-        timeout=15.0,
-        follow_redirects=True,
-        headers={"User-Agent": "Mozilla/5.0"},
-    )
-    resp.raise_for_status()
-    return resp.text
-
-
-def _top_level_markers(soup: BeautifulSoup) -> list:
-    """
-    Cornell LII marks each top-level lettered subsection as:
-        <p class="psection-1">
-          <span class="enumxml" id="j">(j)</span>
-          <span class="et03">Capitalization of betterments</span>—(1) ...
-        </p>
-
-    Two traps make `p.psection-1 > span.enumxml` alone unreliable:
-
-    1. The `id` attribute is not unique — nested roman-numeral list items
-       deeper in the page (e.g. a 2-item list under (h)(5) labeled
-       "(i)"/"(ii)") reuse the `psection-1` class and even collide on the
-       literal `id` of a real top-level letter (1.263(a)-3 has two elements
-       with id="i"). So `id` can't be trusted.
-    2. A stateful "next expected letter a, b, c, ..." filter doesn't work
-       either: the bogus nested "(i)" sits right after "(h)" and its label
-       happens to equal the next expected letter "i", so it gets accepted —
-       which then truncates the (h) chunk at that false boundary. And once
-       the genuine top-level (i) is absent, a strict sequence stalls waiting
-       for "i" and drops (j) onward.
-
-    What actually distinguishes genuine top-level subsections is *both*:
-      - a single alphabetic label ("(a)".."(r)"), which rejects the
-        two-char "(ii)" items, and
-      - a non-empty `<span class="et03">` title sibling, which rejects the
-        empty-titled nested "(i)"/"(ii)" list items.
-    Verified against both 1.263(a)-1 and 1.263(a)-3: every genuine
-    subsection has a non-empty et03 title; every bogus nested marker fails
-    one of these two checks.
-    """
-    top_level = []
-    for marker in soup.select("p.psection-1 > span.enumxml"):
-        label = marker.get_text(strip=True).strip("()")
-        if len(label) != 1 or not label.isalpha():
-            continue
-        if marker.parent is None:
-            continue
-        title_span = marker.parent.select_one("span.et03")
-        if title_span is None or not title_span.get_text(strip=True):
-            continue
-        top_level.append(marker)
-    return top_level
-
 
 # Whole subsections are far too large to embed as one chunk — (h), (j), (k)
 # on 1.263(a)-3 are each 40k–53k chars, but all-MiniLM-L6-v2 only reads
@@ -296,58 +213,6 @@ def chunk_cfr_xml(xml_bytes: bytes, source_label: str) -> list[dict]:
     return chunks
 
 
-def chunk_cfr_page(html: str, source_label: str, wanted_subsections: set[str]) -> list[dict]:
-    """
-    For each wanted top-level subsection, collect its header paragraph plus
-    all sibling <p> tags (e.g. class="psection-2" for nested (j)(1), (j)(2),
-    ...) up to the next top-level marker, then split that body into
-    embedding-window-sized sub-chunks (see _pack). The
-    et03 title span can contain nested markup (e.g. a definedterm link), so
-    title extraction uses get_text(), not raw string matching.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    markers = _top_level_markers(soup)
-
-    chunks = []
-    for i, marker in enumerate(markers):
-        letter = marker.get_text(strip=True).strip("()")
-        if letter not in wanted_subsections:
-            continue
-
-        parent_p = marker.parent
-        title_span = parent_p.select_one("span.et03")
-        topic = title_span.get_text(" ", strip=True) if title_span else ""
-
-        next_boundary = markers[i + 1].parent if i + 1 < len(markers) else None
-
-        body_parts = [parent_p.get_text(" ", strip=True)]
-        sib = parent_p.find_next_sibling()
-        while sib is not None and sib is not next_boundary:
-            body_parts.append(sib.get_text(" ", strip=True))
-            sib = sib.find_next_sibling()
-
-        sub_chunks = _pack(body_parts)
-        header = f"({letter}) {topic}".strip()
-        for part_idx, sub_text in enumerate(sub_chunks):
-            # Prefix continuation pieces with the subsection header so each
-            # sub-chunk is self-describing when embedded/retrieved in isolation
-            # (the first piece already opens with the header text).
-            text = sub_text if part_idx == 0 else f"[{header} (continued)]\n{sub_text}"
-            chunks.append(
-                {
-                    "text": text,
-                    "metadata": {
-                        "source": source_label,
-                        "subsection": letter,
-                        "topic": topic,
-                        "part": part_idx,
-                    },
-                }
-            )
-
-    return chunks
-
-
 def chunk_irs_faq(html: str, source_label: str = "IRS FAQ") -> list[dict]:
     """
     The IRS FAQ page's real content lives inside a single <article> element
@@ -403,11 +268,19 @@ def chunk_irs_faq(html: str, source_label: str = "IRS FAQ") -> list[dict]:
 
 
 def build_index():
+    # Imported lazily, matching the pattern llm_providers.py uses for provider
+    # SDKs: it keeps tests/test_ingest.py able to import the chunking functions
+    # without pulling in torch, so — unlike tests/test_tpr_rag.py — it needs no
+    # module-level skip guard for a cold Hugging Face cache.
+    import chromadb
+    from chromadb.errors import NotFoundError
+    from sentence_transformers import SentenceTransformer
+
     model = SentenceTransformer(EMBED_MODEL)
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
 
     # Delete-and-recreate rather than incrementally updating: this corpus is
-    # tiny (3 source docs, a couple dozen chunks) so a full rebuild is near-
+    # small (5 source files, roughly 500 chunks) so a full rebuild is near-
     # instant, and it keeps re-ingestion simple — no need to reconcile
     # stale/removed chunks from a prior run.
     try:
@@ -420,22 +293,24 @@ def build_index():
     )
 
     all_chunks = []
-    for source_label, source in SOURCES.items():
-        html = fetch_page(source["url"])
-        found = chunk_cfr_page(html, source_label, source["subsections"])
+    for source_label in CFR_SECTIONS:
+        xml_bytes = (SOURCES_DIR / f"{source_label}.xml").read_bytes()
+        found = chunk_cfr_xml(xml_bytes, source_label)
         subs = sorted({c["metadata"]["subsection"] for c in found})
         print(f"{source_label}: {len(found)} chunks across subsections {subs}")
         all_chunks.extend(found)
 
-    faq_chunks = chunk_irs_faq(fetch_page(IRS_FAQ_URL))
+    faq_html = (SOURCES_DIR / IRS_FAQ_FILENAME).read_text(encoding="utf-8")
+    faq_chunks = chunk_irs_faq(faq_html)
     print(f"IRS FAQ: {len(faq_chunks)} chunks")
     all_chunks.extend(faq_chunks)
 
     if not all_chunks:
         raise RuntimeError(
             "Ingestion produced 0 chunks across all sources — parsing likely "
-            "broke (e.g. a source page's HTML structure changed). Refusing "
-            "to build an empty index; fix the chunker before re-running."
+            "broke. The sources are committed under docs/tpr-sources/, so this "
+            "means the chunker regressed, not that a fetch failed. Fix the "
+            "chunker before re-running; refusing to build an empty index."
         )
 
     texts = [c["text"] for c in all_chunks]
