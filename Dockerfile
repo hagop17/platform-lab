@@ -8,8 +8,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Non-root: a container compromise (e.g. an RCE in a dependency) then only
 # has this user's privileges, not root's. Fixed UID 1000 — the common
-# first-non-root-user convention — so it lines up with the host user that
-# typically owns the bind-mounted RAG data (see docker-compose.yml).
+# first-non-root-user convention — so the image behaves predictably if
+# anything is ever bind-mounted into it.
 RUN useradd --create-home --uid 1000 --shell /bin/bash appuser
 WORKDIR /app
 RUN chown appuser:appuser /app
@@ -35,6 +35,16 @@ COPY --chown=appuser:appuser rag/ ./rag/
 # which sentence-transformers reuses automatically at runtime — same model
 # name, same cache location, no re-download.
 RUN uv run python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+# Build the RAG index into the image. Placed after the model bake because
+# ingest needs the embedder, and after the code copy because it imports rag/.
+# The source text is committed (docs/tpr-sources/, sha256-pinned by its
+# manifest), so this step is fully offline — no scraping at build time and no
+# network dependency at container start. TPR_RAG_DATA_DIR must match what
+# docker-compose.yml sets at runtime, or the app would open an empty collection.
+ENV TPR_RAG_DATA_DIR=/home/appuser/.tpr-rag/chroma_data
+COPY --chown=appuser:appuser docs/tpr-sources/ ./docs/tpr-sources/
+RUN uv run python -m rag.ingest
 
 EXPOSE 8000 9464
 CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
