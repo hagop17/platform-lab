@@ -26,14 +26,20 @@ below covers the Terraform, Kubernetes, and CI/CD layers being added on top.
 | OpenTelemetry auto- + manual instrumentation | [`main.py`](main.py) | Traces → console, metrics → Prometheus pull endpoint on `:9464` |
 | Prometheus + Grafana stack | [`docker-compose.yml`](docker-compose.yml), [`prometheus.yml`](prometheus.yml) | Scrapes the app every 5s |
 | LLM-assisted metrics analysis | [`metrics_analysis.py`](metrics_analysis.py) | Queries Prometheus `query_range`, formats the series, asks an LLM for anomalies |
-| RAG over U.S. tangible-property tax regulations | [`rag/`](rag/) | Scrapes + chunks CFR/IRS pages into ChromaDB, retrieves, builds a grounded prompt |
+| RAG over U.S. tangible-property tax regulations | [`rag/`](rag/) | Chunks committed eCFR XML + IRS FAQ into ChromaDB, retrieves, builds a grounded prompt |
 | Pluggable LLM provider | [`llm_providers.py`](llm_providers.py) | `groq` (default) or `anthropic`, selected by `LLM_PROVIDER`; SDKs imported lazily |
 | Sandboxed dev container | [`.devcontainer/`](.devcontainer/) | Default-deny network firewall for unattended agentic work — see [design notes](docs/devcontainer-spec.md) |
 
 The [`rag/ingest.py`](rag/ingest.py) chunker is the most involved piece: it parses
-real-world government HTML (with documented traps around non-unique DOM ids and
-false subsection boundaries) and packs regulation text into embedding-window-sized
-sub-chunks. The reasoning is written up inline and in [`docs/tpr_rag_spec.md`](docs/tpr_rag_spec.md).
+authoritative eCFR XML — fetched by [`rag/fetch_sources.py`](rag/fetch_sources.py)
+from the government's own versioner API and committed to
+[`docs/tpr-sources/`](docs/tpr-sources/) as a reviewable, sha256-pinned snapshot —
+using a boundary rule that resolves the regulation's `(i)`-subsection ambiguity
+(subsection letter vs. nested roman numeral), and packs the result into
+embedding-window-sized sub-chunks. Because the source text is committed, those
+same files double as test fixtures, so the chunker has real tests
+([`tests/test_ingest.py`](tests/test_ingest.py)) for the first time. The reasoning
+is written up inline and in [`docs/tpr_rag_spec.md`](docs/tpr_rag_spec.md).
 
 ## Architecture
 
@@ -124,7 +130,7 @@ curl -s localhost:8000/api/v1/repair-tax-impact \
 ```json
 {
   "answer": "Classification: capitalize. Replacing an entire roof is a restoration...",
-  "sources": ["1.263(a)-3(k)", "1.263(a)-3(j)", "1.263(a)-1(f)"]
+  "sources": ["1.263(a)-3(k)"]
 }
 ```
 
@@ -132,10 +138,14 @@ The `sources` array is the tell: grounded answers cite specific CFR subsections;
 the `-no-rag` variant returns a confident answer with no citations and no guarantee
 it reflects the actual regulation text.
 
-> **Note:** the RAG index is built by [`rag/ingest.py`](rag/ingest.py), which scrapes
-> live CFR/IRS pages. Run it once on the host (`uv run python -m rag.ingest`) before
-> hitting the RAG endpoints — see [`docs/tpr_rag_spec.md`](docs/tpr_rag_spec.md) for
-> why the index lives outside the repo and how Docker mounts it.
+> **Note:** the RAG index is built by [`rag/ingest.py`](rag/ingest.py) from the
+> committed eCFR/IRS snapshot in [`docs/tpr-sources/`](docs/tpr-sources/) — no
+> network access required. In Docker it's **baked into the image at build time**,
+> so there's nothing to run before hitting the RAG endpoints. For local
+> (non-Docker) dev, run `uv run python -m rag.ingest` once (offline, fast) to
+> build the index at `TPR_RAG_DATA_DIR`. To refresh the underlying regulation
+> text itself (occasional, human-run, needs network), see
+> `uv run python -m rag.fetch_sources` in [`CLAUDE.md`](CLAUDE.md).
 
 ## Development
 

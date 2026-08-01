@@ -104,105 +104,206 @@ path or whatever directory a script happens to be run from.
 ## Part 1: Source documents
 
 Primary sources (public domain — U.S. federal regulations, no copyright
-restriction on reproducing full text):
+restriction on reproducing full text). As of the eCFR sources migration
+(see "Source selection" below), these are pulled from the eCFR versioner
+API and the IRS FAQ page by `rag/fetch_sources.py`, committed verbatim
+under `docs/tpr-sources/` with a sha256 manifest, and parsed offline by
+`rag/ingest.py` — see
+`docs/superpowers/specs/2026-07-31-ecfr-sources-design.md` for the full
+migration design:
 
 - **Treas. Reg. §1.263(a)-1** — general capitalization rule, de minimis
-  safe harbor — `https://www.law.cornell.edu/cfr/text/26/1.263(a)-1`
+  safe harbor — `docs/tpr-sources/1.263(a)-1.xml` (eCFR versioner API)
+- **Treas. Reg. §1.263(a)-2** — amounts paid to acquire or produce
+  tangible property; supports separate-asset questions —
+  `docs/tpr-sources/1.263(a)-2.xml`
 - **Treas. Reg. §1.263(a)-3** — the core BAR test: definitions (d),
-  betterments (j), restorations (k), adaptations (l), small-taxpayer safe
-  harbor (h) — `https://www.law.cornell.edu/cfr/text/26/1.263(a)-3`.
-  (Routine maintenance safe harbor, originally expected at a distinct
-  top-level `(i)`, is **not** ingested as its own subsection — see
-  "Confirmed HTML structure" below for why.)
+  determining the unit of property (e), the routine maintenance safe
+  harbor (i), betterments (j), restorations (k), adaptations (l),
+  small-taxpayer safe harbor (h) — `docs/tpr-sources/1.263(a)-3.xml`.
+  (`(i)` was excluded from the old Cornell-HTML-based index because that
+  page gave it no distinct top-level anchor; the eCFR XML chunker's
+  sequence+italic boundary rule recovers it — see "eCFR XML structure and
+  the `(i)` boundary rule" below.)
+- **Treas. Reg. §1.162-4** — repairs, the deduction-side counterpart to
+  capitalization — `docs/tpr-sources/1.162-4.xml`
 - **IRS FAQ** (plain-English cross-reference, useful for casually-phrased
-  questions) —
-  `https://www.irs.gov/businesses/small-businesses-self-employed/tangible-property-final-regulations`
+  questions) — `docs/tpr-sources/irs-faq.html`
 
-Start with just these three. Do not attempt to ingest the full corpus of
-Rev. Procs and the Federal Register preamble in the first pass — that's a
-later expansion, not v1.
+`1.168(i)-8` (partial dispositions) and `1.168(a)-1` (MACRS) are
+deliberately excluded: retrieval returns a fixed `k=6` chunks, so
+off-topic depreciation material would compete with repair-vs-capitalize
+text for those slots.
 
-### Source selection: why Cornell LII, not eCFR.gov
+### Source selection: eCFR versioner API, not Cornell LII
 
-The official U.S. government CFR mirror, **eCFR.gov**, was considered as a
-source for the two regulation-text documents instead of Cornell LII, since
-it's the authoritative primary source rather than a third-party mirror.
-It was rejected: eCFR.gov (which shares infrastructure with
-federalregister.gov) actively blocks plain scripted HTTP requests — a
-`curl`/`httpx` GET against it returns a "Federal Register :: Request
-Access" bot-check page, not the regulation text, confirmed by directly
-fetching `https://www.ecfr.gov/current/title-26/part-1/section-1.263(a)-3`.
-Since `fetch_regulation_text()` uses a plain `httpx.get()` with no headless
+**Original finding (kept here uncorrected, then corrected below — the
+mistake stays visible rather than getting quietly deleted):** The official
+U.S. government CFR mirror, **eCFR.gov**, was considered as a source for
+the two regulation-text documents instead of Cornell LII, since it's the
+authoritative primary source rather than a third-party mirror. It was
+rejected: eCFR.gov (which shares infrastructure with federalregister.gov)
+actively blocks plain scripted HTTP requests — a `curl`/`httpx` GET against
+it returns a "Federal Register :: Request Access" bot-check page, not the
+regulation text, confirmed by directly fetching
+`https://www.ecfr.gov/current/title-26/part-1/section-1.263(a)-3`. Since
+`fetch_regulation_text()` uses a plain `httpx.get()` with no headless
 browser or JS challenge-solving, eCFR.gov is not fetchable by this
 ingestion pipeline. Cornell LII was directly confirmed fetchable (a plain
 `httpx`/`curl` GET against `1.263(a)-3` returns real content, ~954 KB) and
 requires no such workaround, so it remains the source for both regulation
 texts.
 
-### Confirmed HTML structure (Cornell LII)
+**Correction (eCFR sources migration, 2026-07-31): this tested the wrong
+endpoint.** The URL fetched above, `https://www.ecfr.gov/current/...`, is
+the eCFR **website**. It does serve a bot-check page to plain scripted
+clients, exactly as described — that observation was correct. But the
+eCFR **versioner API**, `https://www.ecfr.gov/api/versioner/v1/...`, is a
+completely different surface: it serves structured XML straight to a
+plain `httpx` GET, no headers or JS challenge-solving required (confirmed
+directly by `rag/fetch_sources.py`, which now pulls all four CFR sections
+through it — see `docs/superpowers/specs/2026-07-31-ecfr-sources-design.md`
+§5). The original evaluation never tried the API; it only ever tested the
+website, under the mistaken belief that a bot-check on `ecfr.gov/current/`
+implied the same for `ecfr.gov/api/`. The authoritative-API-over-
+third-party-mirror argument that motivated considering eCFR.gov in the
+first place was right all along — only the fetchability test was wrong.
 
-Fetched and inspected directly (see Source selection above) rather than
-guessed. Cornell LII marks each top-level lettered subsection as:
+Cornell LII is no longer used as a source. Source text now comes from the
+eCFR versioner API (CFR sections) and the IRS FAQ page, fetched by the
+one network-touching module `rag/fetch_sources.py` and committed verbatim
+under `docs/tpr-sources/`, sha256-pinned by `_manifest.json` — the
+`uv.lock` analogy for regulation text: a deliberate, human-run,
+reviewable refresh, not a live fetch on every build. `rag/ingest.py`
+then builds the index entirely offline from those committed files, and in
+Docker the index is built directly into the image at `docker build` time
+(`rag/ingest.py` runs during the build against the committed snapshot)
+rather than being populated via a host bind mount at container start —
+see `Dockerfile` and `docker-compose.yml`, and `CLAUDE.md` → Architecture
+and Gotchas for the operational details.
 
-```html
-<p class="psection-1">
-  <span class="enumxml" id="j">(j)</span>
-  <span class="et03">Capitalization of betterments</span>—(1) ...
-</p>
+### eCFR XML structure and the `(i)` boundary rule
+
+Fetched and inspected directly (`rag/fetch_sources.py` against the eCFR
+versioner API — see "Source selection" above) rather than guessed. Each
+section comes back as one self-contained XML document, the root element
+**being** the section itself rather than wrapped in something else:
+
+```xml
+<DIV8 N="1.263(a)-3" TYPE="SECTION" hierarchy_metadata="...">
+  <HEAD>&#167; 1.263(a)-3 Amounts paid to improve tangible property.</HEAD>
+  <P>(a) <I>Overview.</I> This section provides rules...</P>
+  ...
+  <P>(k) <I>Restorations</I>—(1) In general. ...</P>
+  <EXAMPLE>
+    <HED>Example.</HED>
+    <PSPACE>Railroad rolling stock X is a railroad...</PSPACE>
+  </EXAMPLE>
+  ...
+  <CITA>[T.D. 9636, 78 FR 57718, Sept. 19, 2013, as amended by ...]</CITA>
+</DIV8>
 ```
 
-i.e. a `<p class="psection-1">` whose first child is `<span class="enumxml"
-id="{letter}">({letter})</span>`, immediately followed by a `<span
-class="et03">` containing the subsection's short title (used as the
-`topic` metadata field), followed by sibling `<p>` tags (e.g.
-`class="psection-2"` for nested `(j)(1)`, `(j)(2)`, ...) making up the
-subsection's body, until the next top-level marker.
+`<HEAD>` carries the section title. The body is **structurally flat**:
+`1.263(a)-3` is 141 sibling `<P>` elements (plus 117 `<EXAMPLE>` elements)
+directly under `<DIV8>` — subsection hierarchy (`(a)`, `(a)(1)`,
+`(a)(1)(i)`, ...) is encoded entirely in each paragraph's *text*, not in
+XML nesting. There is no `<P>` inside another `<P>`. Boundaries therefore
+have to be *detected* by inspecting paragraph text, not found by walking a
+tree — the opposite of the old Cornell HTML, whose nested `psection-2`
+paragraphs sat directly under their parent `psection-1`.
 
-**Confirmed also on `1.263(a)-1`** — same `psection-1`/`enumxml`/`et03`
-pattern holds, with one wrinkle: the `et03` title span can contain nested
-markup (e.g. a `definedterm` link), so extraction must use `.get_text()`,
-not assume the title is plain text.
+**`<EXAMPLE>` flattening trap.** Each `<EXAMPLE>` wraps a `<HED>` (heading,
+e.g. `"Example."`) and a `<PSPACE>` (body) as two separate children with no
+whitespace between them in the source. Flattening the whole element with a
+single `"".join(elem.itertext())` therefore fuses the heading's last word
+straight onto the body's first word — `"...rolling stockX is a
+railroad..."` instead of `"...rolling stock X is a railroad..."`. The
+chunker's `_flatten` (`rag/ingest.py`) special-cases `EXAMPLE`: it
+flattens `<HED>` and `<PSPACE>` independently and joins them with an
+explicit space. `<P>`'s own mixed content still flattens correctly with
+plain `itertext()` (e.g. `<P>(a) <I>Overview.</I> This section…` becomes
+`"(a) Overview. This section…"` with no fusion, since real whitespace
+already separates the marker, the italic run, and the trailing text).
 
-**Identifying genuine top-level markers is subtle — two traps.** The `id`
-attribute is not reliably unique: nested roman-numeral list items deeper in
-the page (e.g. a 2-item list under `(h)(5)` labeled "(i)"/"(ii)") share the
-`psection-1` class and even collide on literal `id` with a genuine
-top-level letter (`1.263(a)-3` has two elements with `id="i"`), so `id`
-can't be trusted. A stateful "next expected letter `a, b, c, ...`" filter
-*also* fails — an approach we tried and had to abandon: the bogus nested
-`(i)` sits right after `(h)`, so its label happens to equal the next
-expected letter `i` and gets accepted, which then **truncated the `(h)`
-chunk at that false boundary** (a real bug — `(h)` came out as a 462-char
-stub); and once the genuine top-level `(i)` is absent, a strict sequence
-stalls waiting for `i` and drops `(j)` onward.
+**`<CITA>` exclusion.** The trailing `<CITA>` element is the authority
+citation line (e.g. `[T.D. 9636, 78 FR 57718, Sept. 19, 2013, ...]`) —
+publication metadata, not regulation text. It is not in the chunker's
+`_CONTENT_TAGS` (only `P` and `EXAMPLE` are), so it is skipped entirely
+rather than being swallowed into the final subsection's body as trailing
+noise.
 
-What actually works (`_top_level_markers`) requires **both**: a single
-alphabetic label (`(a)`..`(r)`, which rejects the two-char `(ii)` items)
-**and** a non-empty `<span class="et03">` title sibling (which rejects the
-empty-titled nested `(i)`/`(ii)` list items). Verified on both regulation
-pages: every genuine subsection has a non-empty `et03` title; every bogus
-nested marker fails one of the two checks. No `id`, no stateful sequencing.
+**The `(i)` boundary rule.** `(i)` is ambiguous in the source text: it is
+both subsection `(i)` — the routine maintenance safe harbor — and the
+roman numeral *one* used in nested markers like `(e)(2)(i)`. This same
+ambiguity is what forced `(i)` out of the old Cornell-HTML-based index —
+Cornell's `id="i"` attribute collided between the genuine top-level
+subsection and an unrelated nested list item, so `(i)` had no stable
+top-level anchor there and its content fell silently inside the `(h)`
+chunk instead.
 
-**`(i)` has no distinct top-level heading, so routine-maintenance content
-now falls inside the `(h)` chunk region.** Confirmed by direct inspection:
-this page has no top-level `(i)` heading paragraph the way `(h)`/`(j)`/
-`(k)`/`(l)` do — the routine-maintenance safe harbor exists but nested with
-no stable top-level anchor, and the only `id="i"` element is the unrelated
-list item under `(h)(5)` (even Cornell's own `href="#i"` links resolve to
-it). `(i)` is therefore excluded from the target subsection set (`1.263(a)-3`
-targets `{d, h, j, k, l}`). Because `(h)` is now correctly bounded by the
-next genuine letter `(j)`, its region spans and captures the
-routine-maintenance text — so that content **is** retrievable, but its CFR
-citations read `1.263(a)-3(h)` (the small-taxpayer safe harbor label) since
-it has no separable anchor. The IRS FAQ's dedicated "Safe harbor for
-routine maintenance" entry provides a cleaner alternate citation for it.
+Measured against the real `1.263(a)-3` XML, **neither available signal is
+sufficient alone**:
+
+- *Sequence alone fails.* The first `(i)` after `(h)` is a nested
+  paragraph beginning "2 percent of the unadjusted basis," not the
+  subsection.
+- *Italic title alone fails.* `(v) Leased building` and `(i) Routine
+  maintenance for buildings` both carry italic topic titles but are
+  nested paragraphs, not subsections.
+
+**Rule: accept a paragraph as a top-level boundary only if its leading
+marker is the next expected letter in sequence AND it is immediately
+followed by an italic topic title** (`_subsection_start` in
+`rag/ingest.py`). The italic check is structural, not textual —
+`elem.text` (the string *before* the first child) must strip to exactly
+`"(x)"` and the first child must be `<I>` — rather than a regex over
+flattened text, which would also match a paragraph whose italics happen
+to appear somewhere in the middle.
+
+Verified trace against the real document (from
+`docs/superpowers/specs/2026-07-31-ecfr-sources-design.md` §6):
+
+| Marker | Italic title | Expecting | Decision |
+|---|---|---|---|
+| `(e)` Determining the unit of property | yes | e | accept, expect `f` |
+| `(v)` Leased building | yes | f | reject — wrong letter |
+| `(f)`…`(h)` | yes | f…h | accept, expect `i` |
+| `(i)` 2 percent of the unadjusted basis | **no** | i | reject — no title |
+| `(i)` **Safe harbor for routine maintenance on property** | yes | i | **accept**, expect `j` |
+| `(i)` Routine maintenance for buildings | yes | j | reject — wrong letter |
+| `(i)` Amounts paid for a betterment | no | j | reject |
+| `(v)` Amounts paid to return a unit of property | no | j | reject |
+| `(j)` Capitalization of betterments | yes | j | accept, expect `k` |
+
+Run to completion, the rule accepts exactly 18 subsections — `(a)` through
+`(r)` — each once, and rejects all six nested `(i)` paragraphs and all
+three stray `(v)` paragraphs in `1.263(a)-3`. `(i)` — the routine
+maintenance safe harbor, entirely absent from the old Cornell-based index
+— is now recovered as its own citable subsection, `1.263(a)-3(i)`. The
+rule was validated against **all four** ingested sections
+(`1.263(a)-1`, `1.263(a)-2`, `1.263(a)-3`, `1.162-4`), not just
+`1.263(a)-3`:
+`tests/test_ingest.py::test_parser_finds_each_top_level_subsection_exactly_once`
+runs it against every fixture and asserts the full expected letter range
+for each.
+
+`topic` is extracted from the first `<I>` immediately following the
+marker, with the trailing period stripped (`"Overview."` → `"Overview"`),
+matching the role `span.et03` played in the old Cornell parser so the
+metadata shape stays consistent.
+
+### IRS FAQ structure (unchanged by this migration)
 
 The IRS FAQ page uses a completely different structure — a single
 `<article>` container (confirmed to be the only one on the page, cleanly
 separating real content from surrounding nav chrome) with each question
 as an `<h2>`/`<h3>`/`<h4>` heading followed by one or more `<p>` answer
 paragraphs until the next heading. It needs its own chunking function
-(`chunk_irs_faq`), not `chunk_by_subsection`.
+(`chunk_irs_faq`), not the CFR XML chunker. `rag/fetch_sources.py` now
+fetches the page HTML and commits it to `docs/tpr-sources/irs-faq.html`;
+`chunk_irs_faq`'s BeautifulSoup logic is otherwise verbatim unchanged —
+it just reads the committed file instead of a live response.
 
 ## Part 2: Ingestion script (`rag/ingest.py`)
 
