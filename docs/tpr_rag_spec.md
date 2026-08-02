@@ -17,10 +17,17 @@ citations to the specific regulation section(s) used.
 
 ## Architecture (two stages)
 
-**Ingestion pipeline (offline, run once, re-run only when source docs change):**
+**Source refresh (network, human-run, occasional) — `rag/fetch_sources.py`:**
 ```
-Regulation texts (Cornell LII, IRS, Federal Register)
-  -> chunked by regulation subsection
+eCFR versioner API (26 CFR §§ 1.263(a)-1/-2/-3, 1.162-4) + IRS FAQ page
+  -> response bytes written verbatim to docs/tpr-sources/
+  -> committed to git, with a sha256 manifest (_manifest.json)
+```
+
+**Ingestion pipeline (offline, every build) — `rag/ingest.py`:**
+```
+docs/tpr-sources/*.xml + irs-faq.html   (committed — no network)
+  -> chunked by regulation subsection, packed to the embedding window
   -> embedded (local model, sentence-transformers)
   -> stored in ChromaDB (persisted to local disk)
 ```
@@ -31,7 +38,7 @@ User's repair description / question
   -> embedded (same model as ingestion)
   -> ChromaDB similarity search (top-k chunks)
   -> chunks + question assembled into a prompt
-  -> sent to Claude
+  -> sent to the configured LLM via llm_providers.complete() (groq | anthropic)
   -> answer returned, citing which section(s) it used
 ```
 
@@ -307,9 +314,9 @@ fetches the page HTML and commits it to `docs/tpr-sources/irs-faq.html`;
 `chunk_irs_faq`'s BeautifulSoup logic is otherwise verbatim unchanged —
 it just reads the committed file instead of a live response.
 
-## Part 2: Ingestion script (`rag/ingest.py`)
+## Part 2: Chunking strategy
 
-Fetch each source page, extract the regulation text, and split it into
+Extract the regulation text and split it into
 chunks **by regulation subsection** (e.g. `(d)`, `(j)`, `(k)`, `(l)`, `(h)`,
 `(i)`) — not by fixed character count. Subsection boundaries are natural,
 semantically coherent units; arbitrary character-count chunking would cut
@@ -321,202 +328,12 @@ what that subsection covers: betterment / restoration / adaptation /
 routine maintenance / small taxpayer safe harbor / de minimis safe harbor /
 definitions).
 
-```python
-import os
-from pathlib import Path
+Sub-chunking (packing each subsection to the embedding window) was added
+later — see "Implementation findings (post-build)" below. The shipped
+implementation is `chunk_cfr_xml` / `chunk_irs_faq` / `_pack` in
+[`rag/ingest.py`](../rag/ingest.py).
 
-import httpx
-import chromadb
-from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
-
-load_dotenv()  # explicit — don't rely on the runner (fastapi dev, etc.) to load .env
-
-EMBED_MODEL = "all-MiniLM-L6-v2"  # same model used at query time, must match
-# Outside the repo by default — survives repo deletion/reclone, never git-tracked.
-CHROMA_PATH = Path(os.environ.get("TPR_RAG_DATA_DIR", Path.home() / ".tpr-rag" / "chroma_data"))
-COLLECTION_NAME = "tpr_regulations"
-
-def fetch_regulation_text(url: str) -> str:
-    resp = httpx.get(url, timeout=15.0, follow_redirects=True)
-    resp.raise_for_status()
-    return resp.text  # will need HTML parsing — see note below
-
-def chunk_by_subsection(html_or_text: str, source_label: str) -> list[dict]:
-    """
-    Returns a list of {"text": ..., "metadata": {...}} dicts, one per
-    regulation subsection. Exact parsing depends on the page's HTML
-    structure on Cornell LII — inspect the page structure first (subsection
-    markers like "(j)" typically appear as bolded/anchored headers) rather
-    than guessing a regex up front.
-    """
-    raise NotImplementedError  # implement after inspecting actual page HTML
-
-def build_index():
-    model = SentenceTransformer(EMBED_MODEL)
-    client = chromadb.PersistentClient(path=str(CHROMA_PATH))
-
-    # Delete-and-recreate rather than incrementally updating: this corpus is
-    # tiny (3 source docs, a couple dozen chunks) so a full rebuild is near-
-    # instant, and it keeps re-ingestion simple — no need to reconcile
-    # stale/removed chunks from a prior run.
-    try:
-        client.delete_collection(COLLECTION_NAME)
-    except ValueError:
-        pass  # collection didn't exist yet (first run)
-
-    collection = client.get_or_create_collection(
-        COLLECTION_NAME, metadata={"embed_model": EMBED_MODEL}
-    )
-
-    all_chunks = []
-    # fetch + chunk each of the 3 source URLs, extend all_chunks
-
-    texts = [c["text"] for c in all_chunks]
-    embeddings = model.encode(texts).tolist()
-
-    collection.add(
-        documents=texts,
-        embeddings=embeddings,
-        metadatas=[c["metadata"] for c in all_chunks],
-        ids=[f"chunk_{i:04d}" for i in range(len(all_chunks))],
-    )
-    print(f"Indexed {len(all_chunks)} chunks into ChromaDB")
-
-if __name__ == "__main__":
-    build_index()
-```
-
-**Important implementation note for Claude Code:** don't guess the HTML
-parsing logic for `chunk_by_subsection` blind. Fetch one of the actual URLs
-first, inspect the real HTML structure (or fetch and print the raw text to
-see how subsection markers appear), and write the extraction logic against
-what's actually there. Cornell LII's markup may not be trivially regex-able
-on the first try — budget for a couple of iterations here rather than
-assuming a one-shot regex will work.
-
-## Part 3: Query + endpoint (`rag/tpr_rag.py`)
-
-```python
-import os
-from pathlib import Path
-
-import chromadb
-from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
-from anthropic import Anthropic
-
-load_dotenv()  # explicit — don't rely on the runner (fastapi dev, etc.) to load .env
-
-EMBED_MODEL = "all-MiniLM-L6-v2"  # must match ingest.py exactly
-COLLECTION_NAME = "tpr_regulations"
-# Must resolve to the same location ingest.py wrote to.
-CHROMA_PATH = Path(os.environ.get("TPR_RAG_DATA_DIR", Path.home() / ".tpr-rag" / "chroma_data"))
-
-_model = SentenceTransformer(EMBED_MODEL)
-_client = chromadb.PersistentClient(path=str(CHROMA_PATH))
-_collection = _client.get_or_create_collection(COLLECTION_NAME)
-
-_indexed_model = _collection.metadata.get("embed_model") if _collection.metadata else None
-if _indexed_model and _indexed_model != EMBED_MODEL:
-    raise RuntimeError(
-        f"Embedding model mismatch: index was built with {_indexed_model!r}, "
-        f"but this code uses {EMBED_MODEL!r}. Re-run ingest.py after aligning "
-        "EMBED_MODEL in both files."
-    )
-
-
-def retrieve_relevant_chunks(question: str, k: int = 4) -> list[dict]:
-    question_embedding = _model.encode([question]).tolist()
-    results = _collection.query(query_embeddings=question_embedding, n_results=k)
-
-    return [
-        {"text": doc, "metadata": meta}
-        for doc, meta in zip(results["documents"][0], results["metadatas"][0])
-    ]
-
-
-def build_prompt(question: str, chunks: list[dict]) -> str:
-    context = "\n\n".join(
-        f"[{c['metadata']['source']}({c['metadata']['subsection']}) — {c['metadata']['topic']}]\n{c['text']}"
-        for c in chunks
-    )
-    return f"""You are helping analyze whether a described repair or \
-improvement to rental property must be capitalized or can be deducted as \
-a current expense, under U.S. tangible property regulations.
-
-Answer using ONLY the regulation excerpts below. Cite the specific \
-section and subsection(s) you relied on. If the excerpts don't clearly \
-answer the question, say so explicitly rather than guessing.
-
-Regulation excerpts:
-{context}
-
-Repair description / question: {question}
-
-Provide:
-1. A classification (capitalize / deduct / depends on facts) if the \
-excerpts support one
-2. Which safe harbor or BAR-test category applies, if any
-3. The specific section(s) cited
-4. A brief note that this is not tax advice and a CPA should confirm
-"""
-
-
-def answer_repair_question(question: str, k: int = 4) -> dict:
-    chunks = retrieve_relevant_chunks(question, k=k)
-
-    if not chunks:
-        return {"answer": "No relevant regulation text found for this question.", "sources": []}
-
-    prompt = build_prompt(question, chunks)
-
-    client = Anthropic()
-    msg = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=600,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    return {
-        "answer": msg.content[0].text,
-        "sources": [f"{c['metadata']['source']}({c['metadata']['subsection']})" for c in chunks],
-    }
-```
-
-## Part 4: FastAPI route
-
-```python
-from fastapi import APIRouter
-from pydantic import BaseModel
-from rag.tpr_rag import answer_repair_question
-
-router = APIRouter()
-
-class RepairQuestion(BaseModel):
-    description: str
-
-@router.post("/api/v1/repair-tax-impact")
-def repair_tax_impact(payload: RepairQuestion):
-    return answer_repair_question(payload.description)
-```
-
-Example request:
-```bash
-curl -X POST http://localhost:8000/api/v1/repair-tax-impact \
-  -H "Content-Type: application/json" \
-  -d '{"description": "Replaced the entire roof on a rental property after storm damage"}'
-```
-
-Expected response shape:
-```json
-{
-  "answer": "This is likely a restoration under §1.263(a)-3(k)...",
-  "sources": ["1.263(a)-3(k)", "1.263(a)-3(d)"]
-}
-```
-
-### Comparison endpoint: `POST /api/v1/repair-tax-impact-no-rag`
+## Part 3: Comparison endpoint — `POST /api/v1/repair-tax-impact-no-rag`
 
 Added after the RAG vs. no-RAG comparison test (see below) so the
 difference is directly demonstrable via the API itself, not just something
@@ -534,11 +351,11 @@ def repair_tax_impact_no_rag(payload: RepairQuestion):
 
 ## Implementation findings (post-build)
 
-The code in Parts 2/3 above was the original design; a few things changed
-once actually built and run against live data:
+A few things changed once the feature was actually built and run against
+live data:
 
-- **LLM call abstracted, not a direct `Anthropic()` call.** `rag/tpr_rag.py`
-  doesn't call Anthropic directly as shown above — it calls `complete()`
+- **LLM call abstracted, not a direct `Anthropic()` call.** The original
+  design called Anthropic directly; `rag/tpr_rag.py` instead calls `complete()`
   from a new shared `llm_providers.py` module (extracted from
   `metrics_analysis.py`'s existing Groq/Anthropic provider-dispatch
   mechanism), so the RAG endpoint is provider-configurable via
