@@ -166,8 +166,32 @@ never make network or live-LLM calls — dependencies are stubbed (see
 
 Longer-form design docs live in [`docs/`](docs/):
 
-- [`tpr_rag_spec.md`](docs/tpr_rag_spec.md) — the RAG feature, chunking strategy, and HTML-parsing traps
+- [`tpr_rag_spec.md`](docs/tpr_rag_spec.md) — the RAG feature, chunking strategy, and the eCFR XML parsing rules
 - [`devcontainer-spec.md`](docs/devcontainer-spec.md) — the sandboxed dev container and firewall
+
+## How this was built
+
+Feature work here runs as a written pipeline rather than ad-hoc prompting, using the
+[Superpowers](https://github.com/obra/superpowers) plugin for Claude Code. Each stage
+produces a committed artifact:
+
+1. **Brainstorm → design spec.** The problem, the approach, the tradeoffs, the risks,
+   and what's explicitly out of scope — written and agreed before any code.
+2. **Design spec → implementation plan.** A task-by-task breakdown carrying exact code,
+   exact test assertions, and a verification step per task.
+3. **Plan → execution.** A fresh subagent implements each task, a second reviews it
+   against the plan before the next begins, and a final pass reviews the whole branch.
+
+The July 2026 migration of the tangible-property corpus — from scraped Cornell LII HTML
+to the authoritative eCFR versioner API — is the worked example:
+
+- [design spec](docs/superpowers/specs/2026-07-31-ecfr-sources-design.md) — why the source changed
+- [implementation plan](docs/superpowers/plans/2026-07-31-ecfr-sources.md) — the five tasks it was built from
+- the commit history — roughly one commit per task
+
+Those two documents are point-in-time records and are deliberately **not** updated after
+the fact. The design spec estimated 500–700 chunks; the shipped index has 467. Keeping
+the estimate visible next to the outcome is more useful than quietly correcting it.
 
 ## Roadmap
 
