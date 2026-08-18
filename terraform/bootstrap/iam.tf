@@ -67,6 +67,11 @@ variable "cluster_name" {
   default     = "platform-lab"
 }
 
+variable "budget_alert_email" {
+  description = "Address notified when forecast spend exceeds 80% of the monthly budget"
+  type        = string
+}
+
 # ---------------------------------------------------------------------------
 # GitHub OIDC identity provider (account-wide; only one should exist per account)
 # ---------------------------------------------------------------------------
