@@ -61,6 +61,12 @@ variable "tflock_table_name" {
   type        = string
 }
 
+variable "cluster_name" {
+  description = "EKS cluster name; scopes the deployer's eks:* write permissions"
+  type        = string
+  default     = "platform-lab"
+}
+
 # ---------------------------------------------------------------------------
 # GitHub OIDC identity provider (account-wide; only one should exist per account)
 # ---------------------------------------------------------------------------
@@ -122,6 +128,15 @@ resource "aws_iam_role" "platform_lab_deployer" {
   description        = "Deploys platform-lab"
   assume_role_policy = data.aws_iam_policy_document.deployer_trust.json
 
+  # A hard ceiling. See boundary.tf.
+  permissions_boundary = aws_iam_policy.deployer_boundary.arn
+
+  # 4 hours. Assumed-role credentials default to 1 hour, and a destroy
+  # started at minute 55 can fail partway with ExpiredToken — leaving a
+  # half-destroyed cluster still billing, the exact failure this design
+  # exists to prevent.
+  max_session_duration = 14400
+
   tags = {
     project = "platform-lab"
   }
@@ -132,15 +147,12 @@ resource "aws_iam_role" "platform_lab_deployer" {
 # ---------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "deployer_permissions" {
+
+  # Terraform's own bookkeeping — the state file and its lock, nothing
+  # more. Scoped to the exact bucket and table.
   statement {
-    sid    = "TerraformState"
-    effect = "Allow"
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:ListBucket",
-      "s3:DeleteObject",
-    ]
+    sid     = "TerraformState"
+    actions = ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:DeleteObject"]
     resources = [
       "arn:aws:s3:::${var.tfstate_bucket_name}",
       "arn:aws:s3:::${var.tfstate_bucket_name}/*",
@@ -148,75 +160,107 @@ data "aws_iam_policy_document" "deployer_permissions" {
   }
 
   statement {
-    sid    = "TerraformLock"
-    effect = "Allow"
+    sid       = "TerraformLock"
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:DescribeTable"]
+    resources = ["arn:aws:dynamodb:us-west-2:${var.account_id}:table/${var.tflock_table_name}"]
+  }
+
+  # Reads are separated from writes so the writes can be ARN-scoped.
+  # List/Describe cannot be — AWS gives them no resource-level support.
+  statement {
+    sid       = "EKSRead"
+    actions   = ["eks:List*", "eks:Describe*"]
+    resources = ["*"]
+  }
+
+  # Everything destructive, locked to resources named after THIS cluster.
+  # AccessEntry actions are what grant hagop-admin kubectl access — omit
+  # them and you get a cluster you cannot talk to.
+  statement {
+    sid = "EKSWrite"
     actions = [
-      "dynamodb:GetItem",
-      "dynamodb:PutItem",
-      "dynamodb:DeleteItem",
-      "dynamodb:DescribeTable",
+      "eks:CreateCluster", "eks:DeleteCluster", "eks:UpdateClusterConfig", "eks:UpdateClusterVersion",
+      "eks:CreateNodegroup", "eks:DeleteNodegroup", "eks:UpdateNodegroupConfig", "eks:UpdateNodegroupVersion",
+      "eks:CreateAccessEntry", "eks:DeleteAccessEntry", "eks:UpdateAccessEntry",
+      "eks:AssociateAccessPolicy", "eks:DisassociateAccessPolicy",
+      "eks:TagResource", "eks:UntagResource",
     ]
     resources = [
-      "arn:aws:dynamodb:us-west-2:${var.account_id}:table/${var.tflock_table_name}",
+      "arn:aws:eks:us-west-2:${var.account_id}:cluster/${var.cluster_name}",
+      "arn:aws:eks:us-west-2:${var.account_id}:nodegroup/${var.cluster_name}/*",
+      "arn:aws:eks:us-west-2:${var.account_id}:access-entry/${var.cluster_name}/*",
     ]
   }
 
+  # The weakest statement, and unavoidably so:
+  #   - ec2:Describe* has NO resource-level support in AWS at all
+  #   - CreateVpc/CreateSubnet have no pre-existing resource to name
+  # Containment comes from the permissions boundary's region lock, not
+  # from here. RunInstances/TerminateInstances are deliberately ABSENT —
+  # managed node groups launch instances under EKS's own service-linked
+  # role, not under this one.
   statement {
-    sid    = "EC2Access"
-    effect = "Allow"
+    sid = "EC2Networking"
     actions = [
-      "ec2:RunInstances",
-      "ec2:TerminateInstances",
       "ec2:Describe*",
-      "ec2:CreateTags",
-      "ec2:CreateSecurityGroup",
-      "ec2:DeleteSecurityGroup",
-      "ec2:AuthorizeSecurityGroupIngress",
-      "ec2:RevokeSecurityGroupIngress",
-      "ec2:CreateVpc",
-      "ec2:DeleteVpc",
-      "ec2:CreateSubnet",
-      "ec2:DeleteSubnet",
-      "ec2:AttachInternetGateway",
-      "ec2:CreateInternetGateway",
-      "ec2:DeleteInternetGateway",
-      "ec2:DetachInternetGateway",
-      "ec2:CreateRouteTable",
-      "ec2:DeleteRouteTable",
-      "ec2:CreateRoute",
-      "ec2:AssociateRouteTable",
+      "ec2:CreateVpc", "ec2:DeleteVpc", "ec2:ModifyVpcAttribute",
+      "ec2:CreateSubnet", "ec2:DeleteSubnet", "ec2:ModifySubnetAttribute",
+      "ec2:CreateInternetGateway", "ec2:DeleteInternetGateway",
+      "ec2:AttachInternetGateway", "ec2:DetachInternetGateway",
+      "ec2:CreateRouteTable", "ec2:DeleteRouteTable", "ec2:CreateRoute", "ec2:DeleteRoute",
+      "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable",
+      "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
+      "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
+      "ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress",
+      "ec2:CreateLaunchTemplate", "ec2:DeleteLaunchTemplate", "ec2:CreateLaunchTemplateVersion",
+      "ec2:CreateTags", "ec2:DeleteTags",
     ]
     resources = ["*"]
   }
 
+  # The strongest statement. PassRole is how a role hands an identity to
+  # an AWS service — the classic escalation vector if left open. Here it
+  # is double-locked: two exact role ARNs, AND passable to two services
+  # only. It cannot be repurposed.
   statement {
-    sid    = "ECRAccess"
-    effect = "Allow"
-    actions = [
-      "ecr:GetAuthorizationToken",
-      "ecr:BatchCheckLayerAvailability",
-      "ecr:PutImage",
-      "ecr:InitiateLayerUpload",
-      "ecr:UploadLayerPart",
-      "ecr:CompleteLayerUpload",
-      "ecr:CreateRepository",
-      "ecr:DescribeRepositories",
-      "ecr:BatchGetImage",
-    ]
-    resources = ["*"]
+    sid       = "PassClusterAndNodeRoles"
+    actions   = ["iam:PassRole"]
+    resources = [aws_iam_role.eks_cluster.arn, aws_iam_role.eks_node.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["eks.amazonaws.com", "ec2.amazonaws.com"]
+    }
   }
 
+  # Terraform reads these roles to compute a diff. Read-only, same two ARNs.
   statement {
-    sid    = "CloudWatchAccess"
-    effect = "Allow"
-    actions = [
-      "cloudwatch:PutMetricAlarm",
-      "cloudwatch:DescribeAlarms",
-      "logs:CreateLogGroup",
-      "logs:CreateLogStream",
-      "logs:PutLogEvents",
-      "logs:DescribeLogGroups",
-    ]
+    sid       = "ReadOwnRoles"
+    actions   = ["iam:GetRole", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies"]
+    resources = [aws_iam_role.eks_cluster.arn, aws_iam_role.eks_node.arn]
+  }
+
+  # AWS services create their own internal roles on first use. Resource
+  # must be "*" (the role does not exist yet), so the condition does the
+  # work — only these three services.
+  statement {
+    sid       = "ServiceLinkedRoles"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "autoscaling.amazonaws.com"]
+    }
+  }
+
+  # Managed node groups create an Auto Scaling group on your behalf.
+  # Terraform reads it during refresh. Reads and tags only.
+  statement {
+    sid       = "AutoScalingRead"
+    actions   = ["autoscaling:Describe*", "autoscaling:CreateOrUpdateTags", "autoscaling:DeleteTags"]
     resources = ["*"]
   }
 }
