@@ -23,6 +23,7 @@ data/
 *.tfstate*
 *.tfvars
 *.auto.tfvars
+backend.hcl
 
 # IDE / editor
 .vscode/

@@ -1,0 +1,3 @@
+# Copy to backend.hcl (gitignored), fill in the account ID, then:
+#   terraform init -backend-config=backend.hcl
+bucket = "platform-lab-tfstate-<ACCOUNT_ID>-us-west-2-an"
