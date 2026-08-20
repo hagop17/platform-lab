@@ -195,8 +195,8 @@ the estimate visible next to the outcome is more useful than quietly correcting 
 
 ## Roadmap
 
-- [ ] Terraform to provision the stack
-- [ ] Kubernetes manifests / Helm chart
+- [x] Terraform to provision the stack (`terraform/bootstrap/`, `terraform/eks/`)
+- [x] Kubernetes manifests (`k8s/`)
 - [ ] Grafana dashboards as code (provisioned, not click-configured)
 - [ ] Ship traces to an OTel Collector instead of console
 
