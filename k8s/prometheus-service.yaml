@@ -1,0 +1,15 @@
+# The name `prometheus` is load-bearing: metrics_analysis.py defaults to
+# http://prometheus:9090, so this Service is what makes that default
+# resolve with no code change.
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  type: ClusterIP
+  selector:
+    app: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
