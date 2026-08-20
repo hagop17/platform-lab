@@ -23,8 +23,8 @@ Tasks 1–11 change only the repo, cost nothing, and are verified offline. Tasks
 | [5](#task-5-cluster-stack-scaffold) | Cluster stack scaffold | `terraform/eks/` — backend, provider, variables | `init -backend=false && validate` |
 | [6](#task-6-network) | Network | `vpc.tf` — VPC, 2 subnets, IGW, routing | `validate` |
 | [7](#task-7-cluster-node-group-access-entry) | Cluster, node group, access entry | `eks.tf`, `outputs.tf` — the cluster itself | `validate` |
-| [8](#task-8-app-manifests) | App manifests | `k8s/app-*.yaml` — Deployment with three probes, Service | `--dry-run=client` |
-| [9](#task-9-prometheus-manifests) | Prometheus manifests | `k8s/prometheus-*.yaml` — ConfigMap, Deployment, Service | `--dry-run=client` |
+| [8](#task-8-app-manifests) | App manifests | `k8s/app-*.yaml` — Deployment with three probes, Service | `kubeconform` |
+| [9](#task-9-prometheus-manifests) | Prometheus manifests | `k8s/prometheus-*.yaml` — ConfigMap, Deployment, Service | `kubeconform` |
 | [10](#task-10-ci-validation) | CI validation | One `terraform validate` step | CI run |
 | [11](#task-11-documentation) | Documentation | `kubectl` prerequisite, roadmap bullets | — |
 | | | | |
@@ -48,7 +48,6 @@ Tasks 1–11 change only the repo, cost nothing, and are verified offline. Tasks
 - **Namespace `default`.** No namespace is created.
 - **`terraform/bootstrap/` is applied by `hagop-admin` only, permanently.** Never by the deployer role.
 - **ECR: `IMMUTABLE` tags, keep the 3 most recent images.** Image tags are the git short SHA, never `latest`.
-- **Commit messages are short, imperative, and carry no `Co-Authored-By` trailer.**
 - **Tasks 1–11 touch only the repo and cost nothing. Tasks 12–14 run against live AWS and cost real money.**
 
 ## Testing approach — read before Task 1
@@ -58,9 +57,16 @@ There are no unit tests here, because there is no unit to test: Terraform descri
 | Artifact | Gate | Catches |
 |---|---|---|
 | Terraform | `terraform fmt -check`, then `terraform init -backend=false && terraform validate` | Formatting, syntax, undefined variables, wrong argument names, type errors |
-| Manifests | `kubectl apply --dry-run=client -f k8s/` | YAML syntax and Kubernetes schema errors |
+| Manifests | `kubeconform -strict -summary k8s/*.yaml` | YAML syntax and Kubernetes schema errors, including unknown/misspelled fields |
 
 Both run offline with **no AWS credentials** — which is why Tasks 1–11 are safe to iterate on freely. `-backend=false` is what lets `validate` run without touching S3.
+
+> **Corrected during execution (2026-08-20):** the manifest gate was originally
+> `kubectl apply --dry-run=client -f k8s/`, which does **not** run offline — client-side
+> dry-run still fetches the API server's OpenAPI schema and API group list. See Task 8
+> Step 3 for the full detail. `kubeconform` genuinely validates with no cluster, and is
+> what Task 10 runs in CI. Neither tool can catch a Deployment/Service selector-label
+> mismatch: that is schema-valid but semantically wrong.
 
 The only real verification is Task 13's apply/verify/destroy cycle. Nothing before it proves the design works; it proves the code is well-formed.
 
@@ -1163,10 +1169,20 @@ spec:
 - [ ] **Step 3: Verify schema**
 
 ```bash
-kubectl apply --dry-run=client -f k8s/app-deployment.yaml -f k8s/app-service.yaml
+kubeconform -strict -summary k8s/app-deployment.yaml k8s/app-service.yaml
 ```
 
-Expected: `deployment.apps/app created (dry run)` and `service/app created (dry run)`. No cluster is needed — `--dry-run=client` validates locally.
+Expected: `Valid: 2, Invalid: 0, Errors: 0`.
+
+> **Corrected during execution (2026-08-20).** This step originally read
+> `kubectl apply --dry-run=client -f ...`, claiming "no cluster is needed —
+> `--dry-run=client` validates locally." **That is wrong.** On kubectl
+> v1.36.3, client-side dry-run still contacts the API server: it downloads
+> the OpenAPI schema and resolves the API group list, so with no cluster it
+> fails with `failed to download openapi: ... connection refused` — and
+> `--validate=false` fails too, with `unable to recognize ...`. Offline, the
+> only thing it catches is raw YAML parse errors. `kubeconform` is a genuine
+> offline schema validator and is what Task 10 wires into CI.
 
 - [ ] **Step 4: Commit**
 
@@ -1290,10 +1306,12 @@ spec:
 - [ ] **Step 4: Verify the whole directory**
 
 ```bash
-kubectl apply --dry-run=client -f k8s/
+kubeconform -strict -summary k8s/*.yaml
 ```
 
-Expected: five objects reported as `created (dry run)`.
+Expected: `5 resources found in 5 files - Valid: 5, Invalid: 0, Errors: 0`.
+(Originally `kubectl apply --dry-run=client -f k8s/` — see Task 8 Step 3 for why that
+does not work without a cluster.)
 
 - [ ] **Step 5: Confirm the ConfigMap matches the real file**
 
@@ -1408,11 +1426,35 @@ git commit -m "Document kubectl prerequisite and update roadmap"
 
 ```bash
 aws login --profile hagop-admin
-eval "$(aws configure export-credentials --profile hagop-admin --format env)"
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+export AWS_PROFILE=hagop-admin-tf
 aws sts get-caller-identity
 ```
 
 Expected: the identity shows `hagop-admin`.
+
+> **Corrected during execution (2026-08-20).** This step originally used
+> `eval "$(aws configure export-credentials --profile hagop-admin --format env)"`.
+> **Do not use that pattern for anything long-running.** `aws login` issues
+> credentials that expire every **15 minutes** and are auto-refreshed by the
+> CLI/SDKs for up to 12 hours; the `eval` freezes one 15-minute snapshot into
+> env vars that nothing can renew. It killed four consecutive apply/destroy
+> runs mid-flight with `ExpiredToken`, twice leaving a live cluster untracked
+> in state. The 15-minute lifetime is not configurable — there is no duration
+> flag on `aws login`.
+>
+> The fix is a `credential_process` profile, which lets the SDK re-invoke the
+> command as expiry nears, so refresh happens transparently mid-run. Add once
+> to `~/.aws/config`:
+>
+> ```ini
+> [profile hagop-admin-tf]
+> credential_process = aws configure export-credentials --profile hagop-admin
+> region = us-west-2
+> ```
+>
+> The `unset` is mandatory, not tidiness: env vars outrank profiles in the AWS
+> credential chain, so a stale snapshot would silently win over the profile.
 
 - [ ] **Step 2: Add the new variable, then plan**
 
@@ -1452,15 +1494,27 @@ docker push "$ECR:$SHA"
 
 Expected: push completes. The image is ~2 GB, so allow time on a slow uplink.
 
-- [ ] **Step 5: Put the real image reference in the manifest**
+- [ ] **Step 5: Substitute the real image reference at apply time — do NOT commit it**
 
-Edit `k8s/app-deployment.yaml`, replacing the placeholder `image:` line with the actual `$ECR:$SHA` value.
+Leave the `ACCOUNT_ID` / `REPLACE_WITH_GIT_SHA` placeholders in
+`k8s/app-deployment.yaml` exactly as committed. Substitute them only in the
+stream handed to `kubectl`, so the real values never reach a tracked file:
 
 ```bash
-kubectl apply --dry-run=client -f k8s/app-deployment.yaml
-git add k8s/app-deployment.yaml
-git commit -m "Point app Deployment at the pushed image"
+kubeconform -strict k8s/app-deployment.yaml
+sed "s|ACCOUNT_ID|${ECR%%.*}|; s|REPLACE_WITH_GIT_SHA|$SHA|" \
+  k8s/app-deployment.yaml | kubectl apply -f -
 ```
+
+> **Corrected during execution (2026-08-20).** This step originally read
+> "Edit `k8s/app-deployment.yaml`, replacing the placeholder `image:` line
+> with the actual `$ECR:$SHA` value", followed by `git add` and `git commit`.
+> That **contradicts this plan's own global constraint** — *"No account ID
+> literal in any committed file"* — because the ECR URL embeds the account ID
+> (`<ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/...`). Following it would
+> silently reintroduce into git exactly what the rest of the design keeps out
+> via gitignored `terraform.tfvars` / `backend.hcl`. The placeholders stay
+> committed permanently; substitution happens at deploy time only.
 
 ---
 
@@ -1562,18 +1616,22 @@ If destroy hangs on "VPC has dependencies", something created an AWS resource ou
 Shell 2:
 
 ```bash
-eval "$(aws configure export-credentials --profile hagop-admin --format env)"
-eval "$(aws sts assume-role \
-  --role-arn arn:aws:iam::<ACCOUNT_ID>:role/platform-lab-deployer \
-  --role-session-name platform-lab-verify \
-  --query 'Credentials.[`export AWS_ACCESS_KEY_ID=`||AccessKeyId,
-                        `export AWS_SECRET_ACCESS_KEY=`||SecretAccessKey,
-                        `export AWS_SESSION_TOKEN=`||SessionToken]' \
-  --output text | tr "\t" "\n")"
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+export AWS_PROFILE=platform-lab-deployer
 aws sts get-caller-identity
 ```
 
-Expected: the ARN shows `platform-lab-deployer/platform-lab-verify`.
+Expected: the ARN shows `.../platform-lab-deployer/...`.
+
+> **Corrected during execution (2026-08-20).** This step originally chained
+> `eval "$(aws configure export-credentials --format env)"` into a hand-rolled
+> `aws sts assume-role` piped through `export`. Both halves freeze static credentials
+> that nothing can renew — fatal here, because this task runs a full apply **and**
+> destroy (~30-40 min) against `aws login` credentials that expire every 15 minutes.
+> Use the named profile instead; it requires `[profile platform-lab-deployer]` to set
+> `source_profile = hagop-admin-tf` (see the design spec's "two shells" section). The
+> SDK then auto-refreshes the role assumption against the deployer's 4-hour
+> `max_session_duration`.
 
 - [ ] **Step 2: Apply as the deployer**
 
