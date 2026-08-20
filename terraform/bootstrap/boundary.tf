@@ -24,13 +24,36 @@ data "aws_iam_policy_document" "deployer_boundary" {
       "logs:*",
       "cloudwatch:*",
       "sts:GetCallerIdentity",
-      "iam:PassRole",
       "iam:GetRole",
       "iam:ListRole*",
       "iam:ListAttachedRolePolicies",
       "iam:CreateServiceLinkedRole",
     ]
     resources = ["*"]
+  }
+
+  # PassRole is deliberately NOT in CeilingAllow above. It is the one action
+  # here that converts "can call EC2" into "can become another identity", so
+  # leaving it at resources = ["*"] would make the ceiling useless against
+  # exactly the failure this file exists to prevent: a widened identity
+  # policy. With ec2:* already in the ceiling, an identity policy loosened to
+  # iam:PassRole on "*" would let the deployer launch an instance carrying any
+  # role in the account — DenyPrivilegeEscalation would not stop it, because
+  # no role is being created, only passed.
+  #
+  # Scoped identically to the identity policy's PassClusterAndNodeRoles
+  # statement, so this narrows nothing that works today.
+  statement {
+    sid       = "CeilingPassRole"
+    effect    = "Allow"
+    actions   = ["iam:PassRole"]
+    resources = [aws_iam_role.eks_cluster.arn, aws_iam_role.eks_node.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["eks.amazonaws.com", "ec2.amazonaws.com"]
+    }
   }
 
   statement {
