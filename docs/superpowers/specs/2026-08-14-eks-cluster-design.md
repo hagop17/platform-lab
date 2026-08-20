@@ -513,29 +513,58 @@ No AWS credentials exist in the dev container, so **every command below is a hos
 port-forward, Shell 2 runs `terraform destroy`. This is the design working: the deployer provisions
 AWS infrastructure and has no business holding cluster-admin inside Kubernetes.
 
+Both shells start by clearing any stale env-var credentials, then selecting a profile:
+
 Shell 1:
 
 ```bash
-eval "$(aws configure export-credentials --profile hagop-admin --format env)"
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+export AWS_PROFILE=hagop-admin-tf
 ```
 
 Shell 2:
 
 ```bash
-eval "$(aws configure export-credentials --profile hagop-admin --format env)"
-eval "$(aws sts assume-role \
-  --role-arn arn:aws:iam::<ACCOUNT_ID>:role/platform-lab-deployer \
-  --role-session-name platform-lab-deploy \
-  --query 'Credentials.[`export AWS_ACCESS_KEY_ID=`||AccessKeyId,
-                        `export AWS_SECRET_ACCESS_KEY=`||SecretAccessKey,
-                        `export AWS_SESSION_TOKEN=`||SessionToken]' \
-  --output text | tr "\t" "\n")"
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+export AWS_PROFILE=platform-lab-deployer
 aws sts get-caller-identity     # must show .../platform-lab-deployer/...
 ```
 
-A named profile with `source_profile` would be tidier, but `hagop-admin` authenticates via
-`aws login`, whose credential type does not resolve as a source — the same constraint
-`terraform/bootstrap/iam.tf`'s header already documents for the provider block.
+Requires these two profiles in `~/.aws/config`:
+
+```ini
+[profile hagop-admin-tf]
+credential_process = aws configure export-credentials --profile hagop-admin
+region = us-west-2
+
+[profile platform-lab-deployer]
+role_arn = arn:aws:iam::<ACCOUNT_ID>:role/platform-lab-deployer
+source_profile = hagop-admin-tf
+region = us-west-2
+```
+
+> **Corrected during execution (2026-08-20).** This section originally used
+> `eval "$(aws configure export-credentials --format env)"` in Shell 1 and a hand-rolled
+> `aws sts assume-role` piped into `export` statements in Shell 2, reasoning that *"a named
+> profile with `source_profile` would be tidier, but `hagop-admin` authenticates via
+> `aws login`, whose credential type does not resolve as a source."*
+>
+> The premise is right; the conclusion was wrong. `source_profile` cannot point at
+> `hagop-admin` directly — but it resolves fine against a `credential_process` profile that
+> *wraps* it, which is what `hagop-admin-tf` above is for. That restores named profiles for
+> both shells and removes the manual assume-role entirely.
+>
+> This matters beyond tidiness. `aws login` issues credentials that expire every **15
+> minutes**, auto-refreshed by the CLI/SDKs for up to 12 hours. Freezing one snapshot into
+> env vars gives Terraform a credential nothing can renew — it killed four consecutive
+> apply/destroy runs mid-flight with `ExpiredToken`, twice leaving a live cluster untracked
+> in state, which is precisely the "half-destroyed cluster still billing" failure this design
+> exists to prevent. `credential_process` lets the SDK re-invoke the command as expiry nears,
+> and chaining `source_profile` through it means the *role assumption* auto-refreshes too,
+> against the deployer's 4-hour `max_session_duration` below.
+>
+> The `unset` is mandatory: env vars outrank profiles in the AWS credential chain, so a stale
+> snapshot silently wins over `AWS_PROFILE` with no error.
 
 > **`max_session_duration = 14400`** (4 hours) is set on the deployer role because assumed-role
 > credentials default to one hour. A `destroy` started at minute 55 can fail partway with
