@@ -16,7 +16,12 @@ spec:
     spec:
       containers:
         - name: prometheus
-          image: prom/prometheus:latest
+          # Pinned by digest, not `latest`: the tag is a mutable pointer, so
+          # `latest` would let a pod restart silently run different bytes.
+          # Same rule the ECR repo enforces for the app image
+          # (image_tag_mutability = "IMMUTABLE" in terraform/bootstrap/ecr.tf).
+          # Bump deliberately; the digest is what makes it immutable.
+          image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
           ports:
             - name: http
               containerPort: 9090

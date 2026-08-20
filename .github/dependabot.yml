@@ -7,3 +7,13 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+
+  # Keeps the digest-pinned Prometheus image in k8s/prometheus-deployment.yaml
+  # current — same reason the actions above are SHA-pinned: the pin is what
+  # makes a restart reproducible, and this is what stops the pin going stale.
+  # Dependabot picks up any YAML here that parses with both `apiVersion` and
+  # `kind`, and bumps the tag and its sha256 digest together.
+  - package-ecosystem: "docker"
+    directory: "/k8s"
+    schedule:
+      interval: "monthly"
