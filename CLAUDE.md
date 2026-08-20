@@ -27,6 +27,8 @@ If a task requires reaching a domain not in the allowlist, or requires pushing t
 - **Refresh RAG source text (network, human-run):** `uv run python -m rag.fetch_sources` — rewrites `docs/tpr-sources/` + manifest; review the diff, re-run ingest, run tests, then commit.
 - **Benchmark the retrieval path:** `uv run python -m rag.benchmark` — model load, query/document embedding, and ANN search timings; needs a built index, makes no network or LLM call. Add `--llm` to also time the generation half, which makes **real paid requests** to whichever provider `LLM_PROVIDER` selects (3 by default), so it is opt-in and off by default. Produces the numbers quoted in `docs/guides/rag-embeddings-primer.md` §9.
 - **Pre-commit hooks:** ruff (`--fix`), ruff-format, pyright, pytest (offline, `HF_HUB_OFFLINE=1`), check-yaml, trailing-whitespace, end-of-file-fixer — all must pass before committing.
+- **Kubernetes CLI:** `kubectl` — required on the host for the EKS deployment (see `docs/superpowers/specs/2026-08-14-eks-cluster-design.md`). Not installed in the dev container, which has no AWS credentials. Keep it within ±1 minor version of the cluster (currently 1.36).
+- **Validate k8s manifests offline:** `kubeconform -strict -summary k8s/*.yaml` — schema-only check against `k8s/*.yaml`; used locally and in CI (`.github/workflows/ci.yml`). Needs no cluster and no AWS credentials, but can't catch a Deployment/Service selector-label mismatch, only schema errors.
 
 ## Architecture
 
