@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    app: platform-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: platform-lab
+  template:
+    metadata:
+      labels:
+        app: platform-lab
+    spec:
+      containers:
+        - name: app
+          # Replace the account ID and tag with the pushed git short SHA.
+          image: ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/platform-lab:REPLACE_WITH_GIT_SHA
+          ports:
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 9464
+          env:
+            - name: LLM_PROVIDER
+              value: groq
+            - name: TPR_RAG_DATA_DIR
+              value: /home/appuser/.tpr-rag/chroma_data
+          envFrom:
+            - secretRef:
+                name: platform-lab-secrets
+                optional: true
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 500m
+            limits:
+              memory: 2Gi
+          # main.py imports rag.router -> rag/tpr_rag.py, which constructs
+          # SentenceTransformer and the ChromaDB client at MODULE level, so
+          # startup takes seconds to tens of seconds. Without a
+          # startupProbe the liveness probe kills the container mid-boot,
+          # forever, in a crash loop that reads as an application bug.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 30 # 150s budget
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 3
