@@ -46,6 +46,31 @@ jobs:
 
       - run: terraform fmt -check -recursive terraform
 
+      # -backend=false skips S3, so this needs no AWS credentials —
+      # consistent with the repo convention that CI never reaches the
+      # network for state.
+      - name: Terraform validate
+        run: |
+          terraform -chdir=terraform/eks init -backend=false
+          terraform -chdir=terraform/eks validate
+
+      # Pinned to an exact release + checksum, not /latest/, so CI doesn't
+      # silently pick up a new kubeconform version between runs.
+      - name: Install kubeconform
+        run: |
+          curl -sSLf -o kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
+          echo "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883  kubeconform.tar.gz" | sha256sum -c -
+          tar xzf kubeconform.tar.gz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      # No cluster exists in CI, so this is schema-only validation against
+      # kubeconform's bundled JSON schemas. -strict rejects unknown
+      # fields (catches typos like a misspelled probe field), but it
+      # still can't catch a Deployment/Service selector-label mismatch —
+      # that's semantically wrong, not schema-invalid.
+      - name: Validate k8s manifests
+        run: kubeconform -strict -summary k8s/*.yaml
+
       - name: Typecheck
         run: uv run pyright
 
