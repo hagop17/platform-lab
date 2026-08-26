@@ -7,3 +7,19 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+
+  # Python deps. Must be "uv", not "pip": the pip ecosystem reads
+  # pyproject.toml but won't regenerate uv.lock, leaving the two out of sync.
+  # Alerts come from the dependency graph parsing uv.lock with no config at
+  # all, but update PRs only fire for ecosystems declared here.
+  #
+  # Security-only: limit 0 caps the schedule-driven version-update pipeline at
+  # zero open PRs, while alert-driven security updates ignore this key and use
+  # their own internal limit. Without it the first run opened five at once,
+  # including major SDK bumps CI can't exercise — the anthropic extra isn't
+  # installed in CI, and the RAG model tests skip on a cold HF cache.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 0
