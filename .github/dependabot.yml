@@ -7,3 +7,12 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+
+  # Python deps. Must be "uv", not "pip": the pip ecosystem reads
+  # pyproject.toml but won't regenerate uv.lock, leaving the two out of sync.
+  # Alerts come from the dependency graph parsing uv.lock with no config at
+  # all, but version-update PRs only fire for ecosystems declared here.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "monthly"
