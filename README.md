@@ -27,7 +27,7 @@ below covers the Terraform, Kubernetes, and CI/CD layers being added on top.
 | Prometheus + Grafana stack | [`docker-compose.yml`](docker-compose.yml), [`prometheus.yml`](prometheus.yml) | Scrapes the app every 5s |
 | LLM-assisted metrics analysis | [`metrics_analysis.py`](metrics_analysis.py) | Queries Prometheus `query_range`, formats the series, asks an LLM for anomalies |
 | RAG over U.S. tangible-property tax regulations | [`rag/`](rag/) | Chunks committed eCFR XML + IRS FAQ into ChromaDB, retrieves, builds a grounded prompt |
-| Pluggable LLM provider | [`llm_providers.py`](llm_providers.py) | `groq` (default) or `anthropic`, selected by `LLM_PROVIDER`; SDKs imported lazily |
+| Pluggable LLM provider | [`llm_providers.py`](llm_providers.py) | `groq` (default) or `anthropic`, selected by `LLM_PROVIDER`; model per provider via `GROQ_MODEL`/`ANTHROPIC_MODEL`; SDKs imported lazily |
 | Sandboxed dev container | [`.devcontainer/`](.devcontainer/) | Default-deny network firewall for unattended agentic work — see [design notes](docs/devcontainer-spec.md) |
 
 The [`rag/ingest.py`](rag/ingest.py) chunker is the most involved piece: it parses

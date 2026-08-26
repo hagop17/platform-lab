@@ -20,7 +20,10 @@ def _import_provider_sdk(module_name: str, extra_name: str):
 def _complete_with_groq(prompt: str) -> str:
     Groq = _import_provider_sdk("groq", "groq").Groq
 
-    model = "llama-3.3-70b-versatile"
+    # Env-overridable because Groq decommissions models on a few weeks' notice
+    # (llama-3.3-70b-versatile went away 2026-08-16), and a redeploy shouldn't
+    # need a code change. The span attribute below records what actually ran.
+    model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
     span = trace.get_current_span()
     span.set_attribute("gen_ai.request.model", model)
 
@@ -41,7 +44,7 @@ def _complete_with_groq(prompt: str) -> str:
 def _complete_with_anthropic(prompt: str) -> str:
     Anthropic = _import_provider_sdk("anthropic", "anthropic").Anthropic
 
-    model = "claude-sonnet-4-6"
+    model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     span = trace.get_current_span()
     span.set_attribute("gen_ai.request.model", model)
 

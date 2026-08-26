@@ -14,6 +14,11 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER:-groq}
+      # Bare passthrough (no `=`): if unset in .env these aren't defined in the
+      # container at all, so llm_providers.py's own defaults apply. Writing
+      # `${GROQ_MODEL:-}` instead would set them to "" and defeat that.
+      - GROQ_MODEL
+      - ANTHROPIC_MODEL
       - TPR_RAG_DATA_DIR=/home/appuser/.tpr-rag/chroma_data
 
   prometheus:

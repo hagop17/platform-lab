@@ -63,6 +63,7 @@ Set in `.env` (gitignored) — loaded by `docker-compose.yml` into the `app` ser
 - `GROQ_API_KEY` — required for the default `groq` provider.
 - `ANTHROPIC_API_KEY` — required only if `LLM_PROVIDER=anthropic`.
 - `LLM_PROVIDER` — `groq` (default) or `anthropic`.
+- `GROQ_MODEL` / `ANTHROPIC_MODEL` — optional per-provider model override (`llm_providers.py`). Default to `openai/gpt-oss-120b` and `claude-sonnet-4-6`. These exist because Groq decommissions models on short notice, so swapping one is a config change rather than a code change.
 - `WITH_ANTHROPIC` — Docker build arg (not a runtime var), `false` by default; set `true` to install the `anthropic` extra in the image (see Toolchain & commands above).
 - `TPR_RAG_DATA_DIR` — optional; where the RAG feature's ChromaDB index lives (`rag/ingest.py`, `rag/tpr_rag.py`). Still defaults to `~/.tpr-rag/chroma_data` for local (non-Docker) dev, deliberately outside the repo. In Docker, the index is **built into the image** at `/home/appuser/.tpr-rag/chroma_data` during `docker build` (`rag/ingest.py` runs at build time against the committed `docs/tpr-sources/` snapshot) — `docker-compose.yml` sets `TPR_RAG_DATA_DIR` to the same path so the runtime read matches the build-time write; there is no host bind mount — see `docs/tpr_rag_spec.md` for the full rationale.
 
