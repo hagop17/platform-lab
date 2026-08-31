@@ -10,6 +10,8 @@ dependencies = [
     "fastapi[standard]>=0.137.1",
     "groq>=0.32.0",
     "httpx>=0.28.1",
+    "mcp<2",
+    "mcp-use>=1.7.0",
     "opentelemetry-api>=1.43.0",
     "opentelemetry-exporter-prometheus>=0.64b0",
     "opentelemetry-instrumentation-fastapi>=0.64b0",
