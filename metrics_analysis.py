@@ -12,7 +12,7 @@ from llm_providers import complete
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
 
 
-def query_prometheus(query: str, minutes: int = 15) -> dict:
+def query_prometheus(query: str, minutes: int = 15, step: str = "15s") -> dict:
     end_ts = time.time()
     start_ts = end_ts - (minutes * 60)
 
@@ -22,12 +22,22 @@ def query_prometheus(query: str, minutes: int = 15) -> dict:
             "query": query,
             "start": start_ts,
             "end": end_ts,
-            "step": "15s",
+            "step": step,
         },
         timeout=10.0,
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def list_metric_names() -> list[str]:
+    """Every metric name Prometheus currently holds, via the __name__ label."""
+    resp = httpx.get(
+        f"{PROMETHEUS_URL}/api/v1/label/__name__/values",
+        timeout=10.0,
+    )
+    resp.raise_for_status()
+    return resp.json().get("data", [])
 
 
 def format_metrics_for_llm(prom_response: dict) -> str:
