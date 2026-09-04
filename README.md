@@ -203,3 +203,6 @@ the estimate visible next to the outcome is more useful than quietly correcting 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Source documents in [`docs/tpr-sources/`](docs/tpr-sources/) are US federal
+regulations and IRS publications — public domain, reproduced verbatim.
