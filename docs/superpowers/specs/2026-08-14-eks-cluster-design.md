@@ -684,7 +684,8 @@ CloudTrail trail.
   `s3:PutObject`/`s3:DeleteObject` grant on `bucket/*` covers it and no DynamoDB is involved.
   Consequence to note: the `TerraformLock` DynamoDB statement in the deployer policy and the
   lock table itself are now dead weight — harmless, but candidates for removal once a full
-  apply/destroy cycle confirms nothing else uses them.
+  apply/destroy cycle confirms nothing else uses them. That removal is scheduled as part of
+  the plan's Task 14 Step 6, where the policy is reconciled against what the cycle exercised.
 
   **Why an S3 object is a sufficient lock.** A lock needs exactly one property: *atomic
   create-if-absent*. Two concurrent runs must never both conclude they hold it, which means the

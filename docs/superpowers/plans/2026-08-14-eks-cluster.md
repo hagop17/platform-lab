@@ -1727,6 +1727,23 @@ git add terraform/bootstrap/iam.tf
 git commit -m "Close deployer policy gaps found during verification"
 ```
 
+Removals belong here as much as additions. This step is where the policy is
+reconciled against what the cycle actually exercised, in both directions —
+grants the run proved necessary get added, grants it proved dead get removed.
+
+The known candidate: **the DynamoDB lock grants.** The eks backend locks via
+`use_lockfile` (an S3 object), so a completed apply *and* destroy that never
+touches DynamoDB is the evidence that nothing needs them. If the cycle passes,
+drop the `TerraformLock` statement from `iam.tf`, the `CeilingStateLock`
+statement from `boundary.tf`, and the now-unused `tflock_table_name` variable
+and its `terraform.tfvars` entry. Then delete the `platform-lab-tflock` table by
+hand — it predates this Terraform and is managed by no stack, so no `destroy`
+will ever remove it.
+
+Do this only *after* a green cycle, never before: Task 14 detects missing
+permissions by watching for `AccessDenied`, and editing the policy beforehand
+adds a variable to the one experiment designed to isolate them.
+
 - [ ] **Step 7: Confirm the definition of done**
 
 All of: bootstrap applied; image pushed; apply as admin worked; verification passed; destroy clean; **a full apply → verify → destroy cycle completed as `platform-lab-deployer`**; docs updated.
