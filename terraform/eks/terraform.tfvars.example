@@ -1,0 +1,23 @@
+# Copy to terraform.tfvars (gitignored via *.tfvars) and fill in the real
+# ARNs. Terraform auto-loads terraform.tfvars, so `destroy` then runs with
+# exactly the values `apply` used — passing them as -var flags instead
+# invites a destroy that silently differs from the apply.
+#
+# Generate it from the bootstrap outputs rather than typing ARNs by hand:
+#
+#   cat > terraform.tfvars <<EOF
+#   eks_cluster_role_arn = "$(terraform -chdir=../bootstrap output -raw eks_cluster_role_arn)"
+#   eks_node_role_arn    = "$(terraform -chdir=../bootstrap output -raw eks_node_role_arn)"
+#   admin_principal_arn  = "$(aws sts get-caller-identity --query Arn --output text)"
+#   EOF
+
+eks_cluster_role_arn = "arn:aws:iam::123456789012:role/platform-lab-eks-cluster"
+eks_node_role_arn    = "arn:aws:iam::123456789012:role/platform-lab-eks-node"
+
+# The identity granted cluster-admin kubectl access. Must be an IAM role or
+# user ARN — EKS access entries reject an STS `assumed-role` session ARN, and
+# the failure lands after the control plane is already created and billing.
+# Under IAM Identity Center, `aws sts get-caller-identity` returns the STS
+# form; find the IAM one with:
+#   aws iam list-roles --query "Roles[?contains(RoleName,'AWSReservedSSO')].Arn"
+admin_principal_arn = "arn:aws:iam::123456789012:user/your-admin-user"
