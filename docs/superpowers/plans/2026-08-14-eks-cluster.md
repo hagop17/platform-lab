@@ -86,6 +86,7 @@ The only real verification is Task 13's apply/verify/destroy cycle. Nothing befo
 | `terraform/eks/eks.tf` | Cluster, node group, access entry |
 | `terraform/eks/outputs.tf` | Cluster name, endpoint, kubeconfig command |
 | `terraform/eks/backend.hcl.example` | Template for the gitignored backend config |
+| `terraform/eks/terraform.tfvars.example` | Template for the gitignored variable values — the two bootstrap role ARNs and the kubectl admin principal |
 | `k8s/app-deployment.yaml` | How the app runs |
 | `k8s/app-service.yaml` | Stable DNS name `app` |
 | `k8s/prometheus-configmap.yaml` | `prometheus.yml`, carried into the cluster |
@@ -1553,20 +1554,48 @@ terraform init -backend-config=backend.hcl
 
 If `init` warns that `dynamodb_table` is deprecated, or you prefer S3-native locking, add `use_lockfile = true` to the `backend "s3"` block and re-run. This is the open question in spec §13; the first `init` answers it.
 
-- [ ] **Step 2: Apply**
+- [ ] **Step 2: Write `terraform.tfvars`**
+
+Do this rather than passing `-var` flags. `*.tfvars` is gitignored, Terraform
+auto-loads `terraform.tfvars`, and that is what guarantees `destroy` runs with
+exactly the values `apply` used — a destroy that silently differs from the apply
+is the expensive failure here. Task 14 reuses the same file.
 
 ```bash
-terraform apply \
-  -var="eks_cluster_role_arn=$(terraform -chdir=../bootstrap output -raw eks_cluster_role_arn)" \
-  -var="eks_node_role_arn=$(terraform -chdir=../bootstrap output -raw eks_node_role_arn)" \
-  -var="admin_principal_arn=$(aws sts get-caller-identity --query Arn --output text)"
+cd terraform/eks
+cat > terraform.tfvars <<EOF
+eks_cluster_role_arn = "$(terraform -chdir=../bootstrap output -raw eks_cluster_role_arn)"
+eks_node_role_arn    = "$(terraform -chdir=../bootstrap output -raw eks_node_role_arn)"
+admin_principal_arn  = "$(aws sts get-caller-identity --query Arn --output text)"
+EOF
+cat terraform.tfvars
+```
+
+**Check `admin_principal_arn` before applying.** EKS access entries require an
+IAM **role or user** ARN and reject an STS `assumed-role` session ARN. Under IAM
+Identity Center, `aws sts get-caller-identity` returns the STS form
+(`arn:aws:sts::...:assumed-role/AWSReservedSSO_.../user`), and the rejection
+lands *after* the control plane is created and billing — roughly 15 minutes in.
+If it is the STS form, substitute the IAM one:
+
+```bash
+aws iam list-roles --query "Roles[?contains(RoleName,'AWSReservedSSO')].Arn" --output text
+```
+
+- [ ] **Step 3: Apply**
+
+```bash
+terraform plan     # expect ~17 to add, 0 to change, 0 to destroy
+terraform apply
 ```
 
 Expected: ~18 minutes; the cluster alone takes 12–15.
 
-Consider putting those three values in a gitignored `terraform.tfvars` to avoid retyping them each session.
+Confirm in the plan that `aws_eks_cluster.main` shows `version = "1.36"`, and
+that no NAT gateway, load balancer or EBS volume appears — those would break the
+invariant that everything billable lives in this state file.
 
-- [ ] **Step 3: Deploy the workload**
+- [ ] **Step 4: Deploy the workload**
 
 ```bash
 aws eks update-kubeconfig --name platform-lab --region us-west-2
@@ -1577,7 +1606,7 @@ kubectl rollout status deployment/app --timeout=5m
 
 Expected: rollout completes. It waits out the ~150s model load — that is the `startupProbe` working, not a hang.
 
-- [ ] **Step 4: Verify**
+- [ ] **Step 5: Verify**
 
 ```bash
 kubectl get nodes                 # 1 node, Ready
@@ -1595,7 +1624,7 @@ Expected: `/health` responds; the final query returns a result containing `"1"`.
 
 The `/work` loop matters — Prometheus only has data if traffic happened. Hitting a route does not trigger a scrape.
 
-- [ ] **Step 5: Tear down and confirm**
+- [ ] **Step 6: Tear down and confirm**
 
 ```bash
 kill %1 %2
@@ -1661,7 +1690,7 @@ If this fails with `AccessDenied`, go to Step 4.
 
 `kubectl` must run in **shell 1** (admin). As the deployer it would authenticate as a principal with no access entry and be refused — that is the design working, not a bug.
 
-Repeat Task 13 Steps 3–4.
+Repeat Task 13 Steps 4–5.
 
 - [ ] **Step 4: Close any permission gaps**
 
