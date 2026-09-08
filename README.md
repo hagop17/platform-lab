@@ -206,3 +206,7 @@ MIT — see [LICENSE](LICENSE).
 
 Source documents in [`docs/tpr-sources/`](docs/tpr-sources/) are US federal
 regulations and IRS publications — public domain, reproduced verbatim.
+
+[`docs/guides/rag-embeddings-primer.md`](docs/guides/rag-embeddings-primer.md)
+is licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), free to
+share and adapt, including commercially, with attribution.

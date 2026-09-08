@@ -25,6 +25,7 @@ If a task requires reaching a domain not in the allowlist, or requires pushing t
 - **Install optional LLM provider extra (local dev):** `uv sync --extra anthropic` (see Architecture below)
 - **Build the Docker image with Anthropic support:** `WITH_ANTHROPIC=true docker compose up -d --build` — the `anthropic` extra isn't installed in the image by default (see `Dockerfile`'s `WITH_ANTHROPIC` build arg).
 - **Refresh RAG source text (network, human-run):** `uv run python -m rag.fetch_sources` — rewrites `docs/tpr-sources/` + manifest; review the diff, re-run ingest, run tests, then commit.
+- **Benchmark the retrieval path:** `uv run python -m rag.benchmark` — model load, query/document embedding, and ANN search timings; needs a built index, makes no network or LLM call. Add `--llm` to also time the generation half, which makes **real paid requests** to whichever provider `LLM_PROVIDER` selects (3 by default), so it is opt-in and off by default. Produces the numbers quoted in `docs/guides/rag-embeddings-primer.md` §9.
 - **Pre-commit hooks:** ruff (`--fix`), ruff-format, pyright, pytest (offline, `HF_HUB_OFFLINE=1`), check-yaml, trailing-whitespace, end-of-file-fixer — all must pass before committing.
 
 ## Architecture
