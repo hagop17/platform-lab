@@ -674,6 +674,39 @@ CloudTrail trail.
   **Check; do not assume.** This resolves at the first `terraform init`, which either rejects
   `use_lockfile` as unsupported or warns that `dynamodb_table` is deprecated.
 
+  **Resolved 2026-09-08 — `use_lockfile`, but the question's premise was wrong.** The first
+  `terraform init` warned about neither, because `terraform/eks/main.tf`'s `backend "s3"` block
+  set *neither* option: the stack had no state locking at all. The DynamoDB table does exist and
+  the deployer policy's `TerraformLock` statement grants access to it, but the backend never
+  referenced it — and no stack manages the table itself, which predates this Terraform, so no
+  `destroy` will ever remove it. Adopted `use_lockfile = true`: the lock becomes an S3 object at
+  `eks/terraform.tfstate.tflock`, taken by conditional write, so the existing
+  `s3:PutObject`/`s3:DeleteObject` grant on `bucket/*` covers it and no DynamoDB is involved.
+  Consequence to note: the `TerraformLock` DynamoDB statement in the deployer policy and the
+  lock table itself are now dead weight — harmless, but candidates for removal once a full
+  apply/destroy cycle confirms nothing else uses them.
+
+  **Why an S3 object is a sufficient lock.** A lock needs exactly one property: *atomic
+  create-if-absent*. Two concurrent runs must never both conclude they hold it, which means the
+  check ("does it exist?") and the claim ("write it") cannot be separate operations — between
+  them, the other run does the same and both proceed. That is the entire reason DynamoDB was
+  borrowed in the first place: `PutObject` unconditionally overwrote, so S3 had no way to
+  express "only if absent", whereas DynamoDB had conditional writes on `attribute_not_exists`.
+  The table was never used as a database, only as a mutex — plus somewhere to keep the state's
+  MD5, because S3 was then eventually consistent and could serve a stale read.
+
+  Both reasons have since expired. S3 became strongly consistent in December 2020, retiring the
+  checksum job, and gained conditional writes in August 2024: `If-None-Match: *` makes
+  `PutObject` succeed only when the key is absent and fail with `412 PreconditionFailed`
+  otherwise. That is the same compare-and-swap, now adjudicated by the service already holding
+  the state. Terraform 1.10 exposed it as `use_lockfile`, and 1.11 deprecated `dynamodb_table`.
+
+  The failure modes are unchanged: a hard-killed run leaves the object behind and the next run
+  reports the state as locked, cleared by `terraform force-unlock <ID>` or by deleting the
+  object — exactly as with a stuck DynamoDB row. What changes is the machinery. No second
+  service, no separate IAM statement, no resource `destroy` cannot reach, and no table that can
+  drift out of sync with the state it guards.
+
 ## 14. Prior state confirmed (2026-08-14)
 
 - The applied deployer policy matches `terraform/bootstrap/iam.tf` exactly (state serial 6,
