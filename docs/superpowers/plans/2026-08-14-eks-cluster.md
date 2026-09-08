@@ -1488,11 +1488,25 @@ ECR=$(terraform -chdir=terraform/bootstrap output -raw ecr_repository_url)
 aws ecr get-login-password --region us-west-2 \
   | docker login --username AWS --password-stdin "${ECR%%/*}"
 
-docker build -t "$ECR:$SHA" .
+docker build --provenance=false -t "$ECR:$SHA" .
 docker push "$ECR:$SHA"
 ```
 
-Expected: push completes. The image is ~2 GB, so allow time on a slow uplink.
+Expected: push completes. The image is ~552 MB compressed, so allow time on a slow uplink.
+
+> **Corrected during execution (2026-09-08).** This step originally read
+> `docker build -t "$ECR:$SHA" .`, with no `--provenance=false`. BuildKit attaches
+> a provenance attestation by default, and an attestation cannot live inside an
+> image manifest — it must be a sibling, which forces the push into an OCI **image
+> index**. A single-platform build therefore lands in ECR as *three* manifests:
+> the tagged index, the untagged `linux/amd64` image, and the attestation. That
+> defeats Task 1's lifecycle rule, which counts manifests rather than pushes with
+> `tagStatus = "any"` — "keep the 3 most recent images" silently becomes "keep
+> one." The sharper hazard is that such a rule can expire an untagged child
+> manifest while the tagged index still references it, leaving a tag that resolves
+> to a broken image and cannot be repaired, because `IMMUTABLE` forbids re-pushing
+> it. `--provenance=false` makes one push one manifest, so the rule means what it
+> says.
 
 - [ ] **Step 5: Substitute the real image reference at apply time — do NOT commit it**
 
