@@ -26,6 +26,13 @@ terraform {
   backend "s3" {
     key    = "eks/terraform.tfstate"
     region = "us-west-2"
+
+    # State locking via an S3 conditional write, not a DynamoDB table. The
+    # lock is an object at <key>.tflock in this same bucket, so the
+    # deployer's existing s3:PutObject/DeleteObject grant on bucket/* covers
+    # it and no extra resource or permission is needed. Requires Terraform
+    # >= 1.10; required_version above already demands more than that.
+    use_lockfile = true
   }
 }
 
