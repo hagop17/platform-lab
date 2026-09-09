@@ -1,5 +1,20 @@
 # EKS Cluster Implementation Plan
 
+> **Status: complete — all 14 tasks executed, 2026-08-18 to 2026-09-09.**
+>
+> Verified live on 2026-09-08: node `Ready` on EKS 1.36, both pods `Running`, Prometheus
+> scraping `app:9464` (`up = 1`), `/api/v1/analyze` answering through in-cluster Service DNS,
+> and a clean `terraform destroy` leaving `aws eks list-clusters` empty. Task 14's full
+> apply → verify → destroy cycle as `platform-lab-deployer` passed on 2026-09-09, and again
+> after the policy was narrowed from CloudTrail evidence.
+>
+> **The code blocks below are as-planned, not as-built.** They are kept as the original design
+> record. Several have since diverged — the permissions boundary and deployer policy most of
+> all, plus S3-native state locking, a digest-pinned Prometheus image, and ECR sizing. The
+> files in `terraform/` and `k8s/` are authoritative; the design rationale lives in the spec.
+> Where execution contradicted the plan, a **"Corrected during execution"** note records it
+> in place rather than the original being quietly rewritten.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Run the platform-lab app and Prometheus on a real EKS cluster that Terraform can create and destroy reliably, so the cluster exists only while in use.
@@ -25,7 +40,7 @@ Tasks 1–11 change only the repo, cost nothing, and are verified offline. Tasks
 | [7](#task-7-cluster-node-group-access-entry) | Cluster, node group, access entry | `eks.tf`, `outputs.tf` — the cluster itself | `validate` |
 | [8](#task-8-app-manifests) | App manifests | `k8s/app-*.yaml` — Deployment with three probes, Service | `kubeconform` |
 | [9](#task-9-prometheus-manifests) | Prometheus manifests | `k8s/prometheus-*.yaml` — ConfigMap, Deployment, Service | `kubeconform` |
-| [10](#task-10-ci-validation) | CI validation | One `terraform validate` step | CI run |
+| [10](#task-10-ci-validation) | CI validation | `terraform validate` **and** `kubeconform` steps | CI run |
 | [11](#task-11-documentation) | Documentation | `kubectl` prerequisite, roadmap bullets | — |
 | | | | |
 | [12](#task-12-apply-bootstrap-and-push-the-image--host) | **HOST** — apply bootstrap, push image | Live roles, live ECR, image in it | `terraform plan` shows no destroys |
@@ -33,6 +48,15 @@ Tasks 1–11 change only the repo, cost nothing, and are verified offline. Tasks
 | [14](#task-14-verify-under-least-privilege--host) | **HOST** — verify under least privilege (~$0.27) | Full cycle as the deployer role | The definition of done |
 
 **The dependency that matters:** Tasks 1–2 produce IAM ARNs and an ECR URL that Tasks 3, 5, 7 and 12 consume. Everything else is independent, so 8–11 can be done in any order.
+
+**What the live tasks actually found.** The gates above are what was expected; these are the
+outcomes, and both surprises came from Tasks 12–14 rather than anything offline:
+
+| # | Outcome |
+|---|---|
+| 12 | Bootstrap applied clean. The image is **552 MB**, not the ~2 GB assumed throughout — and a default BuildKit push landed as *three* ECR manifests, silently reducing the "keep 3 images" rule to "keep one." Builds now pass `--provenance=false` |
+| 13 | Passed. The only blocker was external: an AWS account verification hold that surfaced as a misleading EC2 Fleet-quota error on the node group, cleared 2026-09-08 |
+| 14 | Passed, after one real permission gap — `CreateNodegroup` needs `iam:GetRole` on the service-linked role, because EKS's existence check runs as the caller. Only reachable under the deployer, and only ~15 minutes into a run. The policy was then narrowed from CloudTrail evidence and re-verified with a second full cycle |
 
 **Task 14 is the finish line**, not Task 13 — a cluster working under admin proves half the design.
 
@@ -108,7 +132,7 @@ The only real verification is Task 13's apply/verify/destroy cycle. Nothing befo
 - Consumes: nothing
 - Produces: output `ecr_repository_url` (string) — used by Task 8's `image:` field and Task 12's `docker push`
 
-- [ ] **Step 1: Create `terraform/bootstrap/ecr.tf`**
+- [x] **Step 1: Create `terraform/bootstrap/ecr.tf`**
 
 ```hcl
 # ecr.tf
@@ -158,7 +182,7 @@ output "ecr_repository_url" {
 }
 ```
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 ```bash
 cd terraform/bootstrap
@@ -170,7 +194,7 @@ Expected: `fmt -check` prints nothing (exit 0); `validate` prints `Success! The 
 
 If `validate` reports the configuration is not initialised, run `terraform init -backend=false` first.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add terraform/bootstrap/ecr.tf
@@ -188,7 +212,7 @@ git commit -m "Add ECR repository for the app image"
 - Consumes: nothing
 - Produces: `aws_iam_role.eks_cluster.arn`, `aws_iam_role.eks_node.arn`, and matching outputs — consumed by Task 3's `iam:PassRole` statement and Task 5's variables
 
-- [ ] **Step 1: Create `terraform/bootstrap/eks_roles.tf`**
+- [x] **Step 1: Create `terraform/bootstrap/eks_roles.tf`**
 
 ```hcl
 # eks_roles.tf
@@ -269,7 +293,7 @@ output "eks_node_role_arn" {
 }
 ```
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 ```bash
 cd terraform/bootstrap
@@ -278,7 +302,7 @@ terraform fmt -check && terraform validate
 
 Expected: both succeed.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add terraform/bootstrap/eks_roles.tf
@@ -299,7 +323,7 @@ The security-critical task. Two artifacts: a boundary capping what the deployer 
 - Consumes: `aws_iam_role.eks_cluster.arn`, `aws_iam_role.eks_node.arn` (Task 2)
 - Produces: a deployer role able to create and destroy the Task 5–7 stack
 
-- [ ] **Step 1: Create `terraform/bootstrap/boundary.tf`**
+- [x] **Step 1: Create `terraform/bootstrap/boundary.tf`**
 
 ```hcl
 # boundary.tf
@@ -445,7 +469,7 @@ resource "aws_iam_policy" "deployer_boundary" {
 }
 ```
 
-- [ ] **Step 2: Attach the boundary and extend the session, in `iam.tf`**
+- [x] **Step 2: Attach the boundary and extend the session, in `iam.tf`**
 
 Replace the `aws_iam_role.platform_lab_deployer` resource with:
 
@@ -470,7 +494,7 @@ resource "aws_iam_role" "platform_lab_deployer" {
 }
 ```
 
-- [ ] **Step 3: Add a `cluster_name` variable to `iam.tf`**
+- [x] **Step 3: Add a `cluster_name` variable to `iam.tf`**
 
 ```hcl
 variable "cluster_name" {
@@ -480,7 +504,7 @@ variable "cluster_name" {
 }
 ```
 
-- [ ] **Step 4: Replace the deployer identity policy in `iam.tf`**
+- [x] **Step 4: Replace the deployer identity policy in `iam.tf`**
 
 Replace the entire `data "aws_iam_policy_document" "deployer_permissions"` block with:
 
@@ -607,7 +631,7 @@ data "aws_iam_policy_document" "deployer_permissions" {
 
 Note what disappears: `ec2:RunInstances`, `ec2:TerminateInstances`, the whole `ECRAccess` block, and `CloudWatchAccess`. Removing dead grants is as much the deliverable as adding needed ones.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 ```bash
 cd terraform/bootstrap
@@ -616,7 +640,7 @@ terraform fmt -check && terraform validate
 
 Expected: both succeed. A failure naming `aws_iam_role.eks_cluster` means Task 2 was skipped.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add terraform/bootstrap/boundary.tf terraform/bootstrap/iam.tf
@@ -635,7 +659,7 @@ git commit -m "Add deployer permissions boundary and scope its identity policy t
 - Consumes: nothing
 - Produces: nothing consumed by later tasks
 
-- [ ] **Step 1: Create `terraform/bootstrap/budget.tf`**
+- [x] **Step 1: Create `terraform/bootstrap/budget.tf`**
 
 ```hcl
 # budget.tf
@@ -663,7 +687,7 @@ resource "aws_budgets_budget" "monthly" {
 }
 ```
 
-- [ ] **Step 2: Add the variable to `iam.tf`**
+- [x] **Step 2: Add the variable to `iam.tf`**
 
 ```hcl
 variable "budget_alert_email" {
@@ -672,7 +696,7 @@ variable "budget_alert_email" {
 }
 ```
 
-- [ ] **Step 3: Document it in `terraform.tfvars.example`**
+- [x] **Step 3: Document it in `terraform.tfvars.example`**
 
 Append:
 
@@ -680,7 +704,7 @@ Append:
 budget_alert_email = "you@example.com"
 ```
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 ```bash
 cd terraform/bootstrap
@@ -689,7 +713,7 @@ terraform fmt -check && terraform validate
 
 Expected: both succeed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add terraform/bootstrap/budget.tf terraform/bootstrap/iam.tf terraform/bootstrap/terraform.tfvars.example
@@ -708,7 +732,7 @@ git commit -m "Add monthly budget alert"
 - Consumes: bootstrap outputs `eks_cluster_role_arn`, `eks_node_role_arn` (Task 2), passed in as variables
 - Produces: `var.cluster_name`, `var.k8s_version`, `var.instance_type`, `var.eks_cluster_role_arn`, `var.eks_node_role_arn`, `var.admin_principal_arn` for Tasks 6–7
 
-- [ ] **Step 1: Create `terraform/eks/main.tf`**
+- [x] **Step 1: Create `terraform/eks/main.tf`**
 
 ```hcl
 # main.tf
@@ -753,7 +777,7 @@ provider "aws" {
 }
 ```
 
-- [ ] **Step 2: Create `terraform/eks/variables.tf`**
+- [x] **Step 2: Create `terraform/eks/variables.tf`**
 
 ```hcl
 variable "cluster_name" {
@@ -790,7 +814,7 @@ variable "admin_principal_arn" {
 }
 ```
 
-- [ ] **Step 3: Create `terraform/eks/backend.hcl.example`**
+- [x] **Step 3: Create `terraform/eks/backend.hcl.example`**
 
 ```hcl
 # Copy to backend.hcl (gitignored), fill in the account ID, then:
@@ -798,7 +822,7 @@ variable "admin_principal_arn" {
 bucket = "platform-lab-tfstate-<ACCOUNT_ID>-us-west-2-an"
 ```
 
-- [ ] **Step 4: Ignore the real backend config**
+- [x] **Step 4: Ignore the real backend config**
 
 Add to `.gitignore`, under the existing Terraform section:
 
@@ -806,7 +830,7 @@ Add to `.gitignore`, under the existing Terraform section:
 backend.hcl
 ```
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 ```bash
 cd terraform/eks
@@ -816,7 +840,7 @@ terraform fmt -check && terraform validate
 
 Expected: `init` succeeds without contacting S3; `validate` prints `Success!`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add terraform/eks/main.tf terraform/eks/variables.tf terraform/eks/backend.hcl.example .gitignore
@@ -834,7 +858,7 @@ git commit -m "Add cluster stack scaffold with S3 backend"
 - Consumes: `var.cluster_name` (Task 5)
 - Produces: `aws_subnet.public[*].id` — consumed by Task 7's cluster and node group
 
-- [ ] **Step 1: Create `terraform/eks/vpc.tf`**
+- [x] **Step 1: Create `terraform/eks/vpc.tf`**
 
 ```hcl
 # vpc.tf
@@ -910,7 +934,7 @@ resource "aws_route_table_association" "public" {
 }
 ```
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 ```bash
 cd terraform/eks
@@ -919,7 +943,7 @@ terraform fmt -check && terraform validate
 
 Expected: both succeed.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add terraform/eks/vpc.tf
@@ -937,7 +961,7 @@ git commit -m "Add VPC with two public subnets"
 - Consumes: `aws_subnet.public[*].id` (Task 6), all variables from Task 5
 - Produces: outputs `cluster_name`, `cluster_endpoint`, `update_kubeconfig_command` — used in Task 13
 
-- [ ] **Step 1: Create `terraform/eks/eks.tf`**
+- [x] **Step 1: Create `terraform/eks/eks.tf`**
 
 ```hcl
 # eks.tf
@@ -1019,7 +1043,7 @@ resource "aws_eks_node_group" "main" {
 }
 ```
 
-- [ ] **Step 2: Create `terraform/eks/outputs.tf`**
+- [x] **Step 2: Create `terraform/eks/outputs.tf`**
 
 ```hcl
 output "cluster_name" {
@@ -1038,7 +1062,7 @@ output "update_kubeconfig_command" {
 }
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```bash
 cd terraform/eks
@@ -1047,7 +1071,7 @@ terraform fmt -check && terraform validate
 
 Expected: both succeed. If `aws_eks_access_entry` is reported as an unsupported resource type, the AWS provider is older than 5.33 — run `terraform init -backend=false -upgrade`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add terraform/eks/eks.tf terraform/eks/outputs.tf
@@ -1077,7 +1101,7 @@ git commit -m "Add EKS cluster, node group and admin access entry"
 - **all three probes**, on `/health`
 - Service named exactly **`app`**, type ClusterIP
 
-- [ ] **Step 1: Create `k8s/app-deployment.yaml`**
+- [x] **Step 1: Create `k8s/app-deployment.yaml`**
 
 ```yaml
 apiVersion: apps/v1
@@ -1144,7 +1168,7 @@ spec:
             periodSeconds: 5
 ```
 
-- [ ] **Step 2: Create `k8s/app-service.yaml`**
+- [x] **Step 2: Create `k8s/app-service.yaml`**
 
 ```yaml
 # The name `app` is load-bearing: prometheus.yml scrapes "app:9464"
@@ -1167,7 +1191,7 @@ spec:
       targetPort: 9464
 ```
 
-- [ ] **Step 3: Verify schema**
+- [x] **Step 3: Verify schema**
 
 ```bash
 kubeconform -strict -summary k8s/app-deployment.yaml k8s/app-service.yaml
@@ -1185,7 +1209,7 @@ Expected: `Valid: 2, Invalid: 0, Errors: 0`.
 > only thing it catches is raw YAML parse errors. `kubeconform` is a genuine
 > offline schema validator and is what Task 10 wires into CI.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add k8s/app-deployment.yaml k8s/app-service.yaml
@@ -1203,7 +1227,7 @@ git commit -m "Add app Deployment and Service manifests"
 - Consumes: Service DNS name `app` (Task 8)
 - Produces: Service DNS name `prometheus` on port 9090 — what makes `metrics_analysis.py`'s default URL resolve
 
-- [ ] **Step 1: Create `k8s/prometheus-configmap.yaml`**
+- [x] **Step 1: Create `k8s/prometheus-configmap.yaml`**
 
 A ConfigMap is the Kubernetes equivalent of Compose's bind mount: the node has never seen your repo, so the file must be carried into the cluster. The `data` key reproduces `prometheus.yml` **verbatim**.
 
@@ -1226,7 +1250,7 @@ data:
           - targets: ["app:9464"]
 ```
 
-- [ ] **Step 2: Create `k8s/prometheus-deployment.yaml`**
+- [x] **Step 2: Create `k8s/prometheus-deployment.yaml`**
 
 ```yaml
 apiVersion: apps/v1
@@ -1284,7 +1308,7 @@ spec:
           emptyDir: {}
 ```
 
-- [ ] **Step 3: Create `k8s/prometheus-service.yaml`**
+- [x] **Step 3: Create `k8s/prometheus-service.yaml`**
 
 ```yaml
 # The name `prometheus` is load-bearing: metrics_analysis.py defaults to
@@ -1304,7 +1328,7 @@ spec:
       targetPort: 9090
 ```
 
-- [ ] **Step 4: Verify the whole directory**
+- [x] **Step 4: Verify the whole directory**
 
 ```bash
 kubeconform -strict -summary k8s/*.yaml
@@ -1314,7 +1338,7 @@ Expected: `5 resources found in 5 files - Valid: 5, Invalid: 0, Errors: 0`.
 (Originally `kubectl apply --dry-run=client -f k8s/` — see Task 8 Step 3 for why that
 does not work without a cluster.)
 
-- [ ] **Step 5: Confirm the ConfigMap matches the real file**
+- [x] **Step 5: Confirm the ConfigMap matches the real file**
 
 ```bash
 diff <(sed -n '/prometheus.yml: |/,$p' k8s/prometheus-configmap.yaml | tail -n +2 | sed 's/^    //') prometheus.yml
@@ -1322,7 +1346,7 @@ diff <(sed -n '/prometheus.yml: |/,$p' k8s/prometheus-configmap.yaml | tail -n +
 
 Expected: no output. Any difference means the two copies have drifted.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add k8s/prometheus-configmap.yaml k8s/prometheus-deployment.yaml k8s/prometheus-service.yaml
@@ -1340,7 +1364,7 @@ git commit -m "Add Prometheus manifests"
 - Consumes: `terraform/eks/` (Tasks 5–7)
 - Produces: nothing
 
-- [ ] **Step 1: Add a validate step after the existing `terraform fmt` step**
+- [x] **Step 1: Add a validate step after the existing `terraform fmt` step**
 
 The workflow already runs `terraform fmt -check -recursive terraform`, so formatting is covered. Add immediately after it:
 
@@ -1354,7 +1378,7 @@ The workflow already runs `terraform fmt -check -recursive terraform`, so format
           terraform -chdir=terraform/eks validate
 ```
 
-- [ ] **Step 2: Verify the workflow parses**
+- [x] **Step 2: Verify the workflow parses**
 
 ```bash
 python -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml')); print('ok')"
@@ -1362,7 +1386,7 @@ python -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml')); print(
 
 Expected: `ok`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/ci.yml
@@ -1380,13 +1404,13 @@ git commit -m "Validate the EKS stack in CI"
 - Consumes: nothing
 - Produces: nothing
 
-- [ ] **Step 1: Add `kubectl` to CLAUDE.md's "Toolchain & commands"**
+- [x] **Step 1: Add `kubectl` to CLAUDE.md's "Toolchain & commands"**
 
 ```markdown
 - **Kubernetes CLI:** `kubectl` — required on the host for the EKS deployment (see `docs/superpowers/specs/2026-08-14-eks-cluster-design.md`). Not installed in the dev container, which has no AWS credentials. Keep it within ±1 minor version of the cluster (currently 1.36).
 ```
 
-- [ ] **Step 2: Update the README roadmap bullets**
+- [x] **Step 2: Update the README roadmap bullets**
 
 Replace:
 
@@ -1404,7 +1428,7 @@ with:
 
 Leave the Grafana and OTel Collector bullets unchecked — both are explicitly out of scope.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add CLAUDE.md README.md
@@ -1423,7 +1447,7 @@ git commit -m "Document kubectl prerequisite and update roadmap"
 - Consumes: Tasks 1–4, 8
 - Produces: live IAM roles, a live ECR repo, and an image in it — required by Tasks 13–14
 
-- [ ] **Step 1: Authenticate as admin**
+- [x] **Step 1: Authenticate as admin**
 
 ```bash
 aws login --profile hagop-admin
@@ -1457,7 +1481,7 @@ Expected: the identity shows `hagop-admin`.
 > The `unset` is mandatory, not tidiness: env vars outrank profiles in the AWS
 > credential chain, so a stale snapshot would silently win over the profile.
 
-- [ ] **Step 2: Add the new variable, then plan**
+- [x] **Step 2: Add the new variable, then plan**
 
 Add `budget_alert_email` to `terraform/bootstrap/terraform.tfvars` (gitignored), then:
 
@@ -1470,7 +1494,7 @@ Expected: **add** ECR repo + lifecycle policy, 2 roles + 4 policy attachments, b
 
 If any destroy appears, stop and investigate before applying.
 
-- [ ] **Step 3: Apply**
+- [x] **Step 3: Apply**
 
 ```bash
 terraform apply
@@ -1479,7 +1503,7 @@ terraform output
 
 Note `ecr_repository_url`, `eks_cluster_role_arn`, `eks_node_role_arn` — Task 13 needs all three.
 
-- [ ] **Step 4: Build and push the image**
+- [x] **Step 4: Build and push the image**
 
 ```bash
 cd ../..
@@ -1509,7 +1533,7 @@ Expected: push completes. The image is ~552 MB compressed, so allow time on a sl
 > it. `--provenance=false` makes one push one manifest, so the rule means what it
 > says.
 
-- [ ] **Step 5: Substitute the real image reference at apply time — do NOT commit it**
+- [x] **Step 5: Substitute the real image reference at apply time — do NOT commit it**
 
 Leave the `ACCOUNT_ID` / `REPLACE_WITH_GIT_SHA` placeholders in
 `k8s/app-deployment.yaml` exactly as committed. Substitute them only in the
@@ -1543,7 +1567,7 @@ sed "s|ACCOUNT_ID|${ECR%%.*}|; s|REPLACE_WITH_GIT_SHA|$SHA|" \
 - Consumes: Task 12
 - Produces: a validated apply/destroy cycle
 
-- [ ] **Step 1: Configure the backend**
+- [x] **Step 1: Configure the backend**
 
 ```bash
 cd terraform/eks
@@ -1552,9 +1576,17 @@ cp backend.hcl.example backend.hcl
 terraform init -backend-config=backend.hcl
 ```
 
-If `init` warns that `dynamodb_table` is deprecated, or you prefer S3-native locking, add `use_lockfile = true` to the `backend "s3"` block and re-run. This is the open question in spec §13; the first `init` answers it.
+> **Corrected during execution (2026-09-08).** This step said to watch for a `dynamodb_table`
+> deprecation warning, treating that as the answer to spec §13's open question. **No warning
+> appears**, and the reason is that the question's premise was wrong: the `backend "s3"` block
+> set *neither* `dynamodb_table` nor `use_lockfile`, so the stack had no state locking at all.
+> The DynamoDB table existed and the deployer policy even granted access to it, but nothing
+> referenced it. `use_lockfile = true` is now set in `terraform/eks/main.tf` — the lock is an S3
+> object at `eks/terraform.tfstate.tflock`, taken by conditional write, which the existing
+> `s3:PutObject`/`DeleteObject` grant already covers. The DynamoDB grants and the table itself
+> were removed in Task 14 Step 6.
 
-- [ ] **Step 2: Write `terraform.tfvars`**
+- [x] **Step 2: Write `terraform.tfvars`**
 
 Do this rather than passing `-var` flags. `*.tfvars` is gitignored, Terraform
 auto-loads `terraform.tfvars`, and that is what guarantees `destroy` runs with
@@ -1582,7 +1614,7 @@ If it is the STS form, substitute the IAM one:
 aws iam list-roles --query "Roles[?contains(RoleName,'AWSReservedSSO')].Arn" --output text
 ```
 
-- [ ] **Step 3: Apply**
+- [x] **Step 3: Apply**
 
 ```bash
 terraform plan     # expect ~17 to add, 0 to change, 0 to destroy
@@ -1595,7 +1627,7 @@ Confirm in the plan that `aws_eks_cluster.main` shows `version = "1.36"`, and
 that no NAT gateway, load balancer or EBS volume appears — those would break the
 invariant that everything billable lives in this state file.
 
-- [ ] **Step 4: Deploy the workload**
+- [x] **Step 4: Deploy the workload**
 
 ```bash
 aws eks update-kubeconfig --name platform-lab --region us-west-2
@@ -1639,7 +1671,7 @@ Expected: rollout completes. It waits out the ~150s model load — that is the `
 > targets a **destroyed** cluster and fails with `no such host` — a DNS error that
 > reads like a network problem rather than a stale-config one.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 ```bash
 kubectl get nodes                 # 1 node, Ready
@@ -1680,7 +1712,7 @@ The second is the more valuable of the two, and the only check in this task that
 **in-cluster service-to-service DNS** — every other command reaches the pods through
 `port-forward`, which proves nothing about whether the app can resolve `prometheus` itself.
 
-- [ ] **Step 6: Tear down and confirm**
+- [x] **Step 6: Tear down and confirm**
 
 ```bash
 kill %1 %2
@@ -1710,7 +1742,7 @@ If destroy hangs on "VPC has dependencies", something created an AWS resource ou
 - Consumes: Task 13
 - Produces: a deployer role proven sufficient for a full lifecycle
 
-- [ ] **Step 1: Assume the deployer role in a second shell**
+- [x] **Step 1: Assume the deployer role in a second shell**
 
 Shell 2:
 
@@ -1732,7 +1764,7 @@ Expected: the ARN shows `.../platform-lab-deployer/...`.
 > SDK then auto-refreshes the role assumption against the deployer's 4-hour
 > `max_session_duration`.
 
-- [ ] **Step 2: Apply as the deployer**
+- [x] **Step 2: Apply as the deployer**
 
 In shell 2:
 
@@ -1742,13 +1774,13 @@ cd terraform/eks && terraform apply   # same -var flags
 
 If this fails with `AccessDenied`, go to Step 4.
 
-- [ ] **Step 3: Deploy and verify from shell 1**
+- [x] **Step 3: Deploy and verify from shell 1**
 
 `kubectl` must run in **shell 1** (admin). As the deployer it would authenticate as a principal with no access entry and be refused — that is the design working, not a bug.
 
 Repeat Task 13 Steps 4–5.
 
-- [ ] **Step 4: Close any permission gaps**
+- [x] **Step 4: Close any permission gaps**
 
 Find exactly what was denied:
 
@@ -1763,7 +1795,7 @@ This returns the denied calls and nothing else. Add exactly those actions to the
 
 Do not widen to `eks:*` or `ec2:*` to make it stop — that discards the deliverable. Note CloudTrail lags 5–15 minutes.
 
-- [ ] **Step 5: Destroy as the deployer**
+- [x] **Step 5: Destroy as the deployer**
 
 In shell 2:
 
@@ -1776,7 +1808,7 @@ Expected: empty.
 
 Destroy exercises different permissions than apply — `Delete*`, `Detach*`, `DeleteTags`. A policy that applies successfully and cannot destroy is the specific failure this design exists to prevent, so this step is not optional.
 
-- [ ] **Step 6: Commit any policy changes**
+- [x] **Step 6: Commit any policy changes**
 
 ```bash
 git add terraform/bootstrap/iam.tf
@@ -1800,7 +1832,7 @@ Do this only *after* a green cycle, never before: Task 14 detects missing
 permissions by watching for `AccessDenied`, and editing the policy beforehand
 adds a variable to the one experiment designed to isolate them.
 
-- [ ] **Step 7: Confirm the definition of done**
+- [x] **Step 7: Confirm the definition of done**
 
 All of: bootstrap applied; image pushed; apply as admin worked; verification passed; destroy clean; **a full apply → verify → destroy cycle completed as `platform-lab-deployer`**; docs updated.
 
