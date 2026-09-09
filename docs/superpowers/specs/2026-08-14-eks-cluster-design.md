@@ -526,6 +526,12 @@ deployer is granted no cluster access, taking it requires deliberate extra API c
 calls are recorded in CloudTrail.** Detection, not prevention — with (4) as the exception, which
 is genuinely prevented.
 
+The control is a standing CloudTrail rule alerting when the deployer calls `CreateAccessEntry`,
+`AssociateAccessPolicy`, or `CreateCluster` with the bootstrap flag. Detection is credible here
+only because **the deployer cannot reach the watcher** — `events:*` is outside the boundary's
+allowlist ceiling (and not covered by `cloudwatch:*`, despite EventBridge's history as
+"CloudWatch Events"), and `cloudtrail:StopLogging`/`DeleteTrail` are denied outright.
+
 Everything else in the policy is read-only, scoped to `platform-lab`, or condition-locked.
 
 ### 7d. Reactive tightening
