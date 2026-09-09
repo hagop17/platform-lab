@@ -74,6 +74,33 @@ data "aws_iam_policy_document" "deployer_boundary" {
   }
 
   # Denies always win, whatever any identity policy allows.
+
+  # The escalation path this boundary was written to survive, made concrete.
+  # ec2:CreateLaunchTemplate plus eks:CreateNodegroup is arbitrary code
+  # execution INSIDE the cluster: a launch template carries user_data, the
+  # node group boots a node from it, and that node joins holding the node role
+  # — reaching the kubelet's credentials and the Secrets of every pod
+  # scheduled on it, including the app's LLM API key.
+  #
+  # The identity policy no longer grants these (CloudTrail over a full
+  # deployer cycle showed they were never used). This statement is what makes
+  # the closure durable: re-granting them in the identity policy alone would
+  # not reopen the path, which is exactly the "widened under time pressure on
+  # a billing cluster" failure described at the top of this file.
+  #
+  # A legitimate need for a launch template — a custom AMI, real user_data —
+  # requires removing this deny deliberately. That visibility is the point.
+  statement {
+    sid    = "DenyNodeCodeExecution"
+    effect = "Deny"
+    actions = [
+      "ec2:CreateLaunchTemplate",
+      "ec2:CreateLaunchTemplateVersion",
+      "ec2:ModifyLaunchTemplate",
+    ]
+    resources = ["*"]
+  }
+
   statement {
     sid    = "DenyPrivilegeEscalation"
     effect = "Deny"

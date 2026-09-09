@@ -489,23 +489,39 @@ Two statements deserve attention:
   in a code comment** so it reads as a known limit rather than an oversight.
 
 **Honest exposure assessment.** The most useful review lens is not "is each action needed" but
-*what is the worst thing this role could do if someone else obtained it?* Two answers, not one:
+*what is the worst thing this role could do if someone else obtained it?* Four answers:
 
-1. **Delete VPCs and security groups anywhere in us-west-2.** This comes entirely from
-   `EC2Networking`, which is why the boundary's region lock matters.
+1. **Delete VPCs anywhere in us-west-2.** This comes entirely from `EC2Networking`, which is why
+   the boundary's region lock matters.
 2. **Grant itself cluster-admin on `platform-lab`.** `EKSWrite` includes `eks:CreateAccessEntry`
    and `eks:AssociateAccessPolicy`, so the deployer can create an access entry naming itself and
    attach `AmazonEKSClusterAdminPolicy` — then run `kubectl` as cluster-admin.
+3. **Lock the operator out.** The same statement carries `DeleteAccessEntry` and
+   `DisassociateAccessPolicy`, so it can remove the `hagop-admin` entry and leave a running
+   cluster nobody can reach. Denial rather than escalation, and recoverable by admin, but it
+   belongs in the list.
+4. **Run arbitrary code inside the cluster — CLOSED 2026-09-08.** `ec2:CreateLaunchTemplate`
+   plus `eks:CreateNodegroup` meant a node group could be booted from a template carrying custom
+   `user_data`, giving root on a node that holds the node role and has joined the cluster —
+   reaching the kubelet's credentials and the Secrets of every pod scheduled there. Quieter than
+   (2), and it touches no access entry. The launch-template actions are now removed from the
+   identity policy *and* denied in the boundary (`DenyNodeCodeExecution`), so re-granting them in
+   the identity policy alone does not reopen it.
 
-The second is **inherent, not an oversight.** Terraform needs both actions to create the
-`hagop-admin` access entry during `apply`; removing them means the cluster comes up with no
-`kubectl` access at all. Whoever can apply this stack can grant cluster access — that is what
-applying it *means*.
+**(2) is inherent, not an oversight.** Terraform needs both actions to create the `hagop-admin`
+access entry during `apply`; removing them means the cluster comes up with no `kubectl` access at
+all. Whoever can apply this stack can grant cluster access — that is what applying it *means*.
+Moving the access entry to a manual admin step does not fix it either: the deployer holds
+`eks:CreateCluster` and could delete and recreate the cluster with
+`bootstrapClusterCreatorAdminPermissions=true`, which hands cluster-admin to the creator. That
+raises the cost from two quiet API calls to a destroy-and-recreate, and gives up declarative
+access control and the CI path in exchange.
 
-What this changes is the wording of the claim. "The deployer cannot talk to the cluster" is
-false as a security boundary; it is true only as a statement of configuration. The accurate
-version: **the deployer is granted no cluster access, taking it requires an extra deliberate API
-call, and that call is recorded in CloudTrail.** Detection, not prevention.
+So the wording of the claim matters. "The deployer cannot talk to the cluster" is false as a
+security boundary; it is true only as a statement of configuration. The accurate version: **the
+deployer is granted no cluster access, taking it requires deliberate extra API calls, and those
+calls are recorded in CloudTrail.** Detection, not prevention — with (4) as the exception, which
+is genuinely prevented.
 
 Everything else in the policy is read-only, scoped to `platform-lab`, or condition-locked.
 
