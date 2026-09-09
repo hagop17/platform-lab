@@ -1599,12 +1599,45 @@ invariant that everything billable lives in this state file.
 
 ```bash
 aws eks update-kubeconfig --name platform-lab --region us-west-2
+kubectl get nodes    # confirm the kubeconfig points at THIS cluster before continuing
+
+ECR=$(terraform -chdir=../bootstrap output -raw ecr_repository_url)
+SHA=$(aws ecr describe-images --repository-name platform-lab --region us-west-2 \
+  --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags[0]' --output text)
+
+# The Secret must exist BEFORE the Deployment: envFrom is resolved once, at
+# container start. Creating it afterwards needs a `kubectl rollout restart`.
 kubectl create secret generic platform-lab-secrets --from-env-file=../../.env
-kubectl apply -f ../../k8s/
+
+kubectl apply -f ../../k8s/app-service.yaml \
+              -f ../../k8s/prometheus-configmap.yaml \
+              -f ../../k8s/prometheus-deployment.yaml \
+              -f ../../k8s/prometheus-service.yaml
+
+sed "s|ACCOUNT_ID|${ECR%%.*}|; s|REPLACE_WITH_GIT_SHA|$SHA|" \
+  ../../k8s/app-deployment.yaml | kubectl apply -f -
+
 kubectl rollout status deployment/app --timeout=5m
 ```
 
 Expected: rollout completes. It waits out the ~150s model load — that is the `startupProbe` working, not a hang.
+
+> **Corrected during execution (2026-09-08).** This step originally read
+> `kubectl apply -f ../../k8s/`, which applies `k8s/app-deployment.yaml` with its
+> `ACCOUNT_ID` / `REPLACE_WITH_GIT_SHA` placeholders **intact** — the pod then fails
+> with `ImagePullBackOff`. The `sed` substitution appears only in Task 12 Step 5 and
+> must be repeated here, because those placeholders stay committed permanently (see
+> that step for why). Hence the directory apply is split: four manifests go through
+> `-f` unchanged, and `app-deployment.yaml` is piped through `sed` instead.
+>
+> `SHA` is read from ECR rather than `git rev-parse HEAD`: docs-only commits move
+> `HEAD` without producing a new image, and the Deployment must name an image that
+> actually exists.
+>
+> The `kubectl get nodes` check is not redundant with Step 5. `update-kubeconfig`
+> writes a context, but if an older context is still active, `kubectl` silently
+> targets a **destroyed** cluster and fails with `no such host` — a DNS error that
+> reads like a network problem rather than a stale-config one.
 
 - [ ] **Step 5: Verify**
 
@@ -1617,12 +1650,35 @@ kubectl port-forward svc/prometheus 9090:9090 &
 curl localhost:8000/health
 for i in {1..5}; do curl -s localhost:8000/work > /dev/null; done
 sleep 10
-curl -s 'localhost:9090/api/v1/query?query=up{job="platform-lab"}'
+curl -sG localhost:9090/api/v1/query --data-urlencode 'query=up{job="platform-lab"}'
 ```
 
 Expected: `/health` responds; the final query returns a result containing `"1"`.
 
 The `/work` loop matters — Prometheus only has data if traffic happened. Hitting a route does not trigger a scrape.
+
+> **Corrected during execution (2026-09-08).** The last command was originally
+> `curl -s 'localhost:9090/api/v1/query?query=up{job="platform-lab"}'`. `curl` does not
+> URL-encode a query string, so Prometheus receives the `{`, `"` and `=` raw and rejects
+> it: `parse error: unexpected "="`. `-G --data-urlencode` encodes the parameter and
+> sends it as a GET. `query=up` alone also works here, since there is only one job.
+
+**One thing this step does not cover.** Nothing above touches an LLM route, so a missing
+or malformed `GROQ_API_KEY` still looks entirely green — `/health` and `/work` pass
+without it, and `envFrom` marks the Secret `optional: true` so the pod starts regardless.
+Two additional checks close that gap:
+
+```bash
+# Did the key reach the container? (length only — keeps it out of scrollback)
+kubectl exec deployment/app -- sh -c 'echo ${#GROQ_API_KEY}'
+
+# End to end: app -> prometheus:9090 by Service DNS -> Groq. Makes one real paid call.
+curl -s 'localhost:8000/api/v1/analyze?query=up&minutes=5' | head -c 400
+```
+
+The second is the more valuable of the two, and the only check in this task that exercises
+**in-cluster service-to-service DNS** — every other command reaches the pods through
+`port-forward`, which proves nothing about whether the app can resolve `prometheus` itself.
 
 - [ ] **Step 6: Tear down and confirm**
 
