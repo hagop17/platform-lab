@@ -198,21 +198,28 @@ data "aws_iam_policy_document" "deployer_permissions" {
   # managed node groups launch instances under EKS's own service-linked
   # role, not under this one.
   #
-  # Narrowed 2026-09-08 to the actions a full deployer-run apply and destroy
-  # actually called, read from CloudTrail. Removed: the six security-group
-  # actions (EKS creates and manages the cluster security group under its own
-  # service-linked role, and this design adds no rules — holding them was a
-  # live exposure, since nodes carry public IPs and an ingress rule could open
-  # a port on an internet-reachable host); CreateTags/DeleteTags (default_tags
-  # ride along inline via TagSpecifications at create time); DeleteRoute
-  # (a route is deleted with its route table); and the launch-template actions
-  # — see boundary.tf's DenyNodeCodeExecution for why those are the ones that
-  # mattered most.
+  # Narrowed 2026-09-08 from CloudTrail over a full deployer-run apply and
+  # destroy. Removed: the six security-group actions (EKS creates and manages
+  # the cluster security group under its own service-linked role, and this
+  # design adds no rules — holding them was a live exposure, since nodes carry
+  # public IPs and an ingress rule could open a port on an internet-reachable
+  # host) and the three launch-template actions (see boundary.tf's
+  # DenyNodeCodeExecution). Neither is created by this stack, so neither can
+  # be needed implicitly.
   #
-  # Known limit of the method: CloudTrail proves non-use only for management
-  # events. IAM actions are authorised inline during EKS calls and never
-  # appear as caller events, and S3/DynamoDB data events are not logged by
-  # default — so this evidence says nothing about those statements.
+  # CreateTags/DeleteTags/DeleteRoute were removed in the same pass and then
+  # RESTORED — the removal broke `CreateVpc` immediately with
+  # "not authorized to perform: ec2:CreateTags". This is the method's blind
+  # spot, and worth stating precisely: an action supplied as part of another
+  # call is AUTHORISED separately but LOGGED under the outer call. default_tags
+  # reach CreateVpc through TagSpecifications, so ec2:CreateTags is checked and
+  # never appears as its own event. The same is true of iam:PassRole,
+  # iam:GetRole and iam:CreateServiceLinkedRole, and of S3/DynamoDB data events
+  # which are not logged at all by default.
+  #
+  # So absence from CloudTrail proves non-use only for actions that would have
+  # been called DIRECTLY. Where it is ambiguous, prefer keeping a grant that
+  # buys no security over trusting the absence.
   statement {
     sid = "EC2Networking"
     actions = [
@@ -221,8 +228,9 @@ data "aws_iam_policy_document" "deployer_permissions" {
       "ec2:CreateSubnet", "ec2:DeleteSubnet", "ec2:ModifySubnetAttribute",
       "ec2:CreateInternetGateway", "ec2:DeleteInternetGateway",
       "ec2:AttachInternetGateway", "ec2:DetachInternetGateway",
-      "ec2:CreateRouteTable", "ec2:DeleteRouteTable", "ec2:CreateRoute",
+      "ec2:CreateRouteTable", "ec2:DeleteRouteTable", "ec2:CreateRoute", "ec2:DeleteRoute",
       "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable",
+      "ec2:CreateTags", "ec2:DeleteTags",
     ]
     resources = ["*"]
   }
