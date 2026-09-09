@@ -211,8 +211,10 @@ data "aws_iam_policy_document" "deployer_permissions" {
   # service-linked role, and this design adds no rules — holding them was a
   # live exposure, since nodes carry public IPs and an ingress rule could open
   # a port on an internet-reachable host); CreateTags/DeleteTags (default_tags
-  # ride along inline via TagSpecifications at create time); and DeleteRoute
-  # (a route is deleted with its route table).
+  # ride along inline via TagSpecifications at create time); DeleteRoute
+  # (a route is deleted with its route table); and the launch-template actions
+  # — see boundary.tf's DenyNodeCodeExecution for why those are the ones that
+  # mattered most.
   #
   # Known limit of the method: CloudTrail proves non-use only for management
   # events. IAM actions are authorised inline during EKS calls and never
@@ -228,7 +230,6 @@ data "aws_iam_policy_document" "deployer_permissions" {
       "ec2:AttachInternetGateway", "ec2:DetachInternetGateway",
       "ec2:CreateRouteTable", "ec2:DeleteRouteTable", "ec2:CreateRoute",
       "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable",
-      "ec2:CreateLaunchTemplate", "ec2:DeleteLaunchTemplate", "ec2:CreateLaunchTemplateVersion",
     ]
     resources = ["*"]
   }
