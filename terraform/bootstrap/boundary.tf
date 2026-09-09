@@ -66,13 +66,6 @@ data "aws_iam_policy_document" "deployer_boundary" {
     ]
   }
 
-  statement {
-    sid       = "CeilingStateLock"
-    effect    = "Allow"
-    actions   = ["dynamodb:*"]
-    resources = ["arn:aws:dynamodb:us-west-2:${var.account_id}:table/${var.tflock_table_name}"]
-  }
-
   # Denies always win, whatever any identity policy allows.
 
   # The escalation path this boundary was written to survive, made concrete.

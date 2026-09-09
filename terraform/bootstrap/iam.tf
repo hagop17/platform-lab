@@ -56,11 +56,6 @@ variable "tfstate_bucket_name" {
   type        = string
 }
 
-variable "tflock_table_name" {
-  description = "DynamoDB table name for Terraform state locking"
-  type        = string
-}
-
 variable "cluster_name" {
   description = "EKS cluster name; scopes the deployer's eks:* write permissions"
   type        = string
@@ -153,8 +148,12 @@ resource "aws_iam_role" "platform_lab_deployer" {
 
 data "aws_iam_policy_document" "deployer_permissions" {
 
-  # Terraform's own bookkeeping — the state file and its lock, nothing
-  # more. Scoped to the exact bucket and table.
+  # Terraform's own bookkeeping — the state file and its lock, nothing more,
+  # scoped to the exact bucket. Both live here: terraform/eks/ sets
+  # `use_lockfile = true`, so the lock is an S3 object at <key>.tflock taken
+  # by conditional write, and PutObject/DeleteObject on bucket/* is what
+  # covers it. The DynamoDB lock table this used to reference was removed
+  # 2026-09-08 — nothing had referenced it since the backend switched.
   statement {
     sid     = "TerraformState"
     actions = ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:DeleteObject"]
@@ -162,12 +161,6 @@ data "aws_iam_policy_document" "deployer_permissions" {
       "arn:aws:s3:::${var.tfstate_bucket_name}",
       "arn:aws:s3:::${var.tfstate_bucket_name}/*",
     ]
-  }
-
-  statement {
-    sid       = "TerraformLock"
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:DescribeTable"]
-    resources = ["arn:aws:dynamodb:us-west-2:${var.account_id}:table/${var.tflock_table_name}"]
   }
 
   # Reads are separated from writes so the writes can be ARN-scoped.
