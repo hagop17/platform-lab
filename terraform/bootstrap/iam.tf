@@ -261,6 +261,27 @@ data "aws_iam_policy_document" "deployer_permissions" {
     }
   }
 
+  # Creating a service-linked role is not enough: before creating one, EKS
+  # first checks whether it already exists, and that check runs as the CALLER.
+  # Without this, CreateNodegroup fails with
+  #   "Failed to validate if SLR: AWSServiceRoleForAmazonEKSNodegroup already
+  #    exists due to missing permissions for 'iam:GetRole'"
+  # — found on the first deployer-run apply (2026-09-08). Admin never hits it,
+  # and it appears only at node-group creation, ~15 minutes into a run.
+  #
+  # Scoped to the aws-service-role path for the same three services as above,
+  # not "*": these ARNs are AWS-owned and hold no permissions this role could
+  # otherwise reach.
+  statement {
+    sid     = "ReadServiceLinkedRoles"
+    actions = ["iam:GetRole"]
+    resources = [
+      "arn:aws:iam::${var.account_id}:role/aws-service-role/eks.amazonaws.com/*",
+      "arn:aws:iam::${var.account_id}:role/aws-service-role/eks-nodegroup.amazonaws.com/*",
+      "arn:aws:iam::${var.account_id}:role/aws-service-role/autoscaling.amazonaws.com/*",
+    ]
+  }
+
   # Managed node groups create an Auto Scaling group on your behalf.
   # Terraform reads it during refresh. Reads and tags only.
   statement {
