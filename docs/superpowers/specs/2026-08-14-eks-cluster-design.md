@@ -454,6 +454,30 @@ when CI pushes); `CloudWatchAccess` (control-plane logging is off and nothing he
 **Added:** scoped `eks:*`, `iam:PassRole`, `iam:CreateServiceLinkedRole`, launch templates,
 `ec2:DeleteTags`, autoscaling reads.
 
+**Narrowed after verification (2026-09-08).** The list above was written from intent, before
+anything had run. A full deployer-run apply *and* destroy, read back from CloudTrail, showed
+nine of the granted EC2 actions were never called, and they were removed:
+
+| Removed | Why it was never needed |
+|---|---|
+| `CreateSecurityGroup`, `DeleteSecurityGroup`, `Authorize*`/`Revoke*SecurityGroup{Ingress,Egress}` | EKS creates and manages the cluster security group under its own service-linked role; this design adds no rules of its own |
+| `CreateTags`, `DeleteTags` | `default_tags` ride along inline via `TagSpecifications` on the create calls |
+| `DeleteRoute` | A route is deleted with its route table |
+
+The security-group removal is the one that mattered: nodes carry public IPs, so holding
+`AuthorizeSecurityGroupIngress` on the node or cluster group meant the ability to open a port on
+an internet-reachable host. The other three bought nothing and were removed for consistency —
+the standard is *called during a verified cycle*, not *plausibly useful later*. Re-granting is a
+two-minute change if a future path needs one, announced by an `UnauthorizedOperation` naming the
+exact action.
+
+**Limit of the method, worth stating explicitly:** CloudTrail proves non-use only for
+**management events**. IAM actions (`PassRole`, `GetRole`, `CreateServiceLinkedRole`) are
+authorised inline during the EKS calls that need them and never appear as caller events — the
+`iam:GetRole` gap below is proof they are load-bearing while invisible. S3 and DynamoDB data
+events are not logged by default. So this evidence justifies nothing about `TerraformState`,
+`TerraformLock`, or the IAM statements.
+
 Two statements deserve attention:
 
 - **`PassClusterAndNodeRoles` is the strongest.** `PassRole` is how a role hands an identity to an

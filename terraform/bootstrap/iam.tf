@@ -204,6 +204,20 @@ data "aws_iam_policy_document" "deployer_permissions" {
   # from here. RunInstances/TerminateInstances are deliberately ABSENT —
   # managed node groups launch instances under EKS's own service-linked
   # role, not under this one.
+  #
+  # Narrowed 2026-09-08 to the actions a full deployer-run apply and destroy
+  # actually called, read from CloudTrail. Removed: the six security-group
+  # actions (EKS creates and manages the cluster security group under its own
+  # service-linked role, and this design adds no rules — holding them was a
+  # live exposure, since nodes carry public IPs and an ingress rule could open
+  # a port on an internet-reachable host); CreateTags/DeleteTags (default_tags
+  # ride along inline via TagSpecifications at create time); and DeleteRoute
+  # (a route is deleted with its route table).
+  #
+  # Known limit of the method: CloudTrail proves non-use only for management
+  # events. IAM actions are authorised inline during EKS calls and never
+  # appear as caller events, and S3/DynamoDB data events are not logged by
+  # default — so this evidence says nothing about those statements.
   statement {
     sid = "EC2Networking"
     actions = [
@@ -212,13 +226,9 @@ data "aws_iam_policy_document" "deployer_permissions" {
       "ec2:CreateSubnet", "ec2:DeleteSubnet", "ec2:ModifySubnetAttribute",
       "ec2:CreateInternetGateway", "ec2:DeleteInternetGateway",
       "ec2:AttachInternetGateway", "ec2:DetachInternetGateway",
-      "ec2:CreateRouteTable", "ec2:DeleteRouteTable", "ec2:CreateRoute", "ec2:DeleteRoute",
+      "ec2:CreateRouteTable", "ec2:DeleteRouteTable", "ec2:CreateRoute",
       "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable",
-      "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
-      "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
-      "ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress",
       "ec2:CreateLaunchTemplate", "ec2:DeleteLaunchTemplate", "ec2:CreateLaunchTemplateVersion",
-      "ec2:CreateTags", "ec2:DeleteTags",
     ]
     resources = ["*"]
   }
