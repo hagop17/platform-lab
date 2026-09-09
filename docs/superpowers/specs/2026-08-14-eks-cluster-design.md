@@ -59,8 +59,10 @@ actually happens.
 | **Total while running** | **~$0.19/hr** |
 
 A session (~15 min create + use + ~10 min destroy) costs roughly **$0.27**. Standing cost after
-`destroy` is the Elastic Container Registry (ECR) repo (~$0.30/month) plus IAM roles, the state
-bucket, and the lock table.
+`destroy` is the Elastic Container Registry (ECR) repo (~$0.30/month) plus IAM roles and the state
+bucket. (Measured 2026-09-08: the image is 552 MB rather than the ~2 GB assumed here, so ECR is
+nearer $0.06/month. The DynamoDB lock table that used to appear in this list was removed once the
+backend moved to `use_lockfile` — see §13.)
 
 **The risk is not the hourly rate — it is forgetting once.** A cluster left running for a month is
 ~$140. Spot instances were considered and rejected: they save ~$0.058/hr (≈$8/year at two sessions
@@ -399,8 +401,9 @@ never be possible; there is nothing to observe.
 > unless the boundary allows S3 too.
 
 **Allow (broad ceiling):** `eks:*`, `ec2:*`, `autoscaling:*`, `ecr:*`, `logs:*`, `cloudwatch:*`;
-`s3:*` on the state bucket only; `dynamodb:*` on the lock table only; `iam:PassRole`,
-`iam:GetRole`, `iam:ListRole*`, `iam:ListAttachedRolePolicies`.
+`s3:*` on the state bucket only; `iam:PassRole`, `iam:GetRole`, `iam:ListRole*`,
+`iam:ListAttachedRolePolicies`. (The `dynamodb:*` ceiling on the lock table was removed
+2026-09-08 with the table itself; `iam:PassRole` was later scoped to the two EKS role ARNs.)
 
 **Explicit deny — wins over any allow, now or later:**
 
@@ -765,10 +768,13 @@ CloudTrail trail.
   `destroy` will ever remove it. Adopted `use_lockfile = true`: the lock becomes an S3 object at
   `eks/terraform.tfstate.tflock`, taken by conditional write, so the existing
   `s3:PutObject`/`s3:DeleteObject` grant on `bucket/*` covers it and no DynamoDB is involved.
-  Consequence to note: the `TerraformLock` DynamoDB statement in the deployer policy and the
-  lock table itself are now dead weight — harmless, but candidates for removal once a full
-  apply/destroy cycle confirms nothing else uses them. That removal is scheduled as part of
-  the plan's Task 14 Step 6, where the policy is reconciled against what the cycle exercised.
+  Consequence: the `TerraformLock` DynamoDB statement in the deployer policy and the
+  `CeilingStateLock` statement in the boundary became dead weight. **Both removed 2026-09-08**,
+  along with the `tflock_table_name` variable, once a full deployer-run apply *and* destroy had
+  completed against `use_lockfile` — the reconciliation the plan's Task 14 Step 6 exists for.
+  Note the evidence here is the backend configuration, not CloudTrail: DynamoDB and S3 data
+  events are not logged by default, so a CloudTrail query could never have shown the table going
+  unused. The `platform-lab-tflock` table itself is managed by no stack and was deleted by hand.
 
   **Why an S3 object is a sufficient lock.** A lock needs exactly one property: *atomic
   create-if-absent*. Two concurrent runs must never both conclude they hold it, which means the
@@ -798,7 +804,8 @@ CloudTrail trail.
   `ec2:CreateLaunchTemplate`, only `CreateTags` and not `DeleteTags`. VPC/subnet/IGW/route-table
   grants are reusable as-is.
 - State backend exists and is live: bucket `platform-lab-tfstate-<ACCOUNT_ID>-us-west-2-an` and
-  DynamoDB table `platform-lab-tflock` (ACTIVE).
+  DynamoDB table `platform-lab-tflock` (ACTIVE). *(Still true as recorded on 2026-08-14. The
+  table was never referenced by any backend and was deleted 2026-09-08 — see §13.)*
 - Bootstrap deliberately stays on **local** state — it creates the identity everything else uses,
   so putting its state behind a backend those identities protect is circular. Its resilience story
   is the four `terraform import` commands in `iam.tf`'s footer.
@@ -820,11 +827,10 @@ data "aws_iam_policy_document" "deployer_permissions" {
                  "arn:aws:s3:::${var.tfstate_bucket_name}/*"]
   }
 
-  statement {
-    sid       = "TerraformLock"
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:DescribeTable"]
-    resources = ["arn:aws:dynamodb:us-west-2:${var.account_id}:table/${var.tflock_table_name}"]
-  }
+  # (A TerraformLock statement granting dynamodb:GetItem/PutItem/DeleteItem/
+  # DescribeTable on the lock table stood here. Removed 2026-09-08: the eks
+  # backend locks via use_lockfile, an S3 object the TerraformState statement
+  # above already covers.)
 
   # Reads are separated from writes so the writes can be ARN-scoped.
   # List/Describe can't be — AWS gives them no resource-level support.
