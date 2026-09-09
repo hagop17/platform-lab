@@ -386,6 +386,15 @@ kubectl rollout restart deployment/prometheus
 | `aws_budgets_budget` | $20, `FORECASTED`, 80% threshold, email subscriber |
 | Outputs | ECR repo URL, both role ARNs — consumed as `terraform/eks/` variables |
 
+**The OIDC trust condition stays at `repo:<org>/<repo>:*` for now, deliberately.** That wildcard
+matches every ref and trigger, so any workflow on any branch could assume the deployer — but no
+workflow requests an OIDC token today (`ci.yml` grants `contents: read` only, never
+`id-token: write`), and reaching it needs push access to the repository. The blast radius is
+bounded by everything in §7b and §7c: region-locked, EKS actions scoped to `platform-lab`, no IAM
+writes, no launch templates. **Narrow it to `:ref:refs/heads/main` when CI starts deploying** —
+at which point the workflow will need developing on a branch first, so expect to allowlist that
+branch temporarily.
+
 `AmazonEC2ContainerRegistryReadOnly` on the node role is what makes ECR pulls work with no
 `imagePullSecret`.
 
