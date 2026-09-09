@@ -464,22 +464,30 @@ nine of the granted EC2 actions were never called, and they were removed:
 | Removed | Why it was never needed |
 |---|---|
 | `CreateSecurityGroup`, `DeleteSecurityGroup`, `Authorize*`/`Revoke*SecurityGroup{Ingress,Egress}` | EKS creates and manages the cluster security group under its own service-linked role; this design adds no rules of its own |
-| `CreateTags`, `DeleteTags` | `default_tags` ride along inline via `TagSpecifications` on the create calls |
-| `DeleteRoute` | A route is deleted with its route table |
+| `CreateLaunchTemplate`, `CreateLaunchTemplateVersion`, `DeleteLaunchTemplate` | The node group uses no launch template; EKS creates its own internally. Also denied at the boundary — see the exposure assessment below |
 
-The security-group removal is the one that mattered: nodes carry public IPs, so holding
-`AuthorizeSecurityGroupIngress` on the node or cluster group meant the ability to open a port on
-an internet-reachable host. The other three bought nothing and were removed for consistency —
-the standard is *called during a verified cycle*, not *plausibly useful later*. Re-granting is a
-two-minute change if a future path needs one, announced by an `UnauthorizedOperation` naming the
-exact action.
+Both groups matter for the same reason: **this stack creates neither resource**, so neither
+action can be needed implicitly. The security-group one closed a live exposure — nodes carry
+public IPs, so `AuthorizeSecurityGroupIngress` on the node or cluster group meant the ability to
+open a port on an internet-reachable host.
 
-**Limit of the method, worth stating explicitly:** CloudTrail proves non-use only for
-**management events**. IAM actions (`PassRole`, `GetRole`, `CreateServiceLinkedRole`) are
-authorised inline during the EKS calls that need them and never appear as caller events — the
-`iam:GetRole` gap below is proof they are load-bearing while invisible. S3 and DynamoDB data
-events are not logged by default. So this evidence justifies nothing about `TerraformState`,
-`TerraformLock`, or the IAM statements.
+**A failed removal, and the lesson it taught.** `CreateTags`, `DeleteTags` and `DeleteRoute` were
+removed in the same pass on the same evidence, and the next deployer `apply` failed on its very
+first call: *"not authorized to perform: ec2:CreateTags on resource: .../vpc/*"*. They were
+restored.
+
+The reason is the method's blind spot, and it is sharper than "management events only": **an
+action supplied as part of another call is authorised separately but logged under the outer
+call.** `default_tags` reach `CreateVpc` through `TagSpecifications`, so `ec2:CreateTags` is
+checked on every create and appears in CloudTrail as `CreateVpc`. The same holds for
+`iam:PassRole`, `iam:GetRole` and `iam:CreateServiceLinkedRole` — invisible and load-bearing, as
+the `iam:GetRole` gap below demonstrates — and S3/DynamoDB data events are not logged at all by
+default.
+
+So absence from CloudTrail proves non-use only for actions that would have been called
+**directly**. The working rule: remove a grant when it buys security *and* the resource it acts
+on is not created by this stack. Where that is ambiguous, keep it — an unused grant with no
+escalation value costs nothing, and this attempt cost a failed apply to learn.
 
 Two statements deserve attention:
 
