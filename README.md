@@ -116,6 +116,56 @@ PROMETHEUS_URL=http://localhost:9090 uv run fastapi dev main.py
 override it when running the app on the host against a Prometheus you've exposed on
 localhost.
 
+### On EKS (needs an AWS account, costs money)
+
+The cluster is deliberately ephemeral — ~$0.19/hr, ~18 minutes to create and ~10 to
+destroy — so it exists only while in use.
+
+**Once, ever.** [`terraform/bootstrap/`](terraform/bootstrap/) holds what must outlive
+any cluster: the two IAM roles EKS assumes, the deploy role with its permissions
+boundary, the ECR repository, and a budget alarm. It is applied by an admin identity and
+is never part of a `destroy`.
+
+```bash
+cp terraform/bootstrap/terraform.tfvars.example terraform/bootstrap/terraform.tfvars
+# fill in account_id, the state bucket name, and budget_alert_email — gitignored
+terraform -chdir=terraform/bootstrap apply
+
+SHA=$(git rev-parse --short HEAD)
+ECR=$(terraform -chdir=terraform/bootstrap output -raw ecr_repository_url)
+aws ecr get-login-password --region us-west-2 \
+  | docker login --username AWS --password-stdin "${ECR%%/*}"
+docker build --provenance=false -t "$ECR:$SHA" .    # the flag is load-bearing —
+docker push "$ECR:$SHA"                             # see CLAUDE.md's ECR gotcha
+```
+
+**Every session.** [`terraform/eks/`](terraform/eks/) holds everything billable — VPC,
+cluster, node group — and is torn down each time. The first three lines are one-time
+setup per machine; the rest is the cycle:
+
+```bash
+cp terraform/eks/backend.hcl.example terraform/eks/backend.hcl
+cp terraform/eks/terraform.tfvars.example terraform/eks/terraform.tfvars
+# fill both in (also gitignored), then:
+terraform -chdir=terraform/eks init -backend-config=backend.hcl
+
+terraform -chdir=terraform/eks apply
+aws eks update-kubeconfig --name platform-lab --region us-west-2
+kubectl create secret generic platform-lab-secrets --from-env-file=.env
+kubectl apply -f k8s/          # except app-deployment.yaml — its ACCOUNT_ID and
+                               # REPLACE_WITH_GIT_SHA placeholders are substituted
+                               # at deploy time, never committed
+kubectl port-forward svc/app 8000:8000
+
+terraform -chdir=terraform/eks destroy    # then confirm: aws eks list-clusters
+```
+
+Everything billable lives in Terraform's state, so `destroy` reaches all of it — that
+invariant is why there is no LoadBalancer, no PersistentVolumeClaim and no NAT gateway.
+The full runbook, including verifying the whole cycle under the least-privilege deploy
+role, is Tasks 12–14 of the
+[implementation plan](docs/superpowers/plans/2026-08-14-eks-cluster.md).
+
 ## Example: metrics analysis
 
 ```bash
@@ -170,13 +220,15 @@ it reflects the actual regulation text.
 | Format | `uv run ruff format .` |
 | Typecheck | `uv run pyright` |
 | Test | `uv run pytest` |
+| Validate Terraform | `terraform -chdir=terraform/<stack> init -backend=false && terraform -chdir=terraform/<stack> validate` |
+| Validate k8s manifests | `kubeconform -strict -summary k8s/*.yaml` |
 
-Pre-commit runs ruff, ruff-format, pyright and pytest. CI runs those plus
-`pip-audit`, `terraform fmt -check`, `terraform validate` on both stacks, and
-`kubeconform -strict` over [`k8s/`](k8s/) — the infra checks need no cloud
-credentials, so every push validates the Terraform and manifests offline. Tests
-never make network or live-LLM calls — dependencies are stubbed (see
-[`CLAUDE.md`](CLAUDE.md) → *Testing conventions*).
+Pre-commit runs ruff, ruff-format, pyright, pytest and `terraform fmt -check`. CI
+runs those plus `pip-audit`, `terraform validate` on both stacks, and
+`kubeconform -strict` over [`k8s/`](k8s/). The infra checks need no cloud
+credentials — `-backend=false` skips S3 — so every push validates the Terraform and
+manifests offline. Tests never make network or live-LLM calls — dependencies are
+stubbed (see [`CLAUDE.md`](CLAUDE.md) → *Testing conventions*).
 
 ## Design notes
 
@@ -198,8 +250,11 @@ produces a committed artifact:
    and what's explicitly out of scope — written and agreed before any code.
 2. **Design spec → implementation plan.** A task-by-task breakdown carrying exact code,
    exact test assertions, and a verification step per task.
-3. **Plan → execution.** A fresh subagent implements each task, a second reviews it
-   against the plan before the next begins, and a final pass reviews the whole branch.
+3. **Plan → execution.** Each task is implemented and reviewed against the plan before
+   the next begins, with a final pass over the whole branch. How much of that is
+   delegated to subagents versus done interactively varies by task — the RAG work was
+   largely subagent-driven; the Kubernetes manifests were hand-written to learn the
+   material, and the live AWS tasks were run at a terminal.
 
 The July 2026 migration of the tangible-property corpus — from scraped Cornell LII HTML
 to the authoritative eCFR versioner API — is the worked example:
