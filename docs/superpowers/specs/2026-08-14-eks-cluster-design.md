@@ -232,6 +232,34 @@ outside the VPC the hostname resolves publicly, inside it resolves privately.
 > (unlike `enable_dns_support`, which defaults to true). Without it, private endpoint resolution
 > silently fails and nodes cannot reach the control plane.
 
+**The API endpoint is reachable from the whole internet — probeable, not readable.** Leaving
+`public_access_cidrs` unset means EKS applies its default of `["0.0.0.0/0"]`, which a `destroy`
+plan makes visible. Precisely what that does and does not expose:
+
+- **Traffic is not readable.** The connection is TLS, so a `kubectl` session — bearer token,
+  object contents, the Secret being created — is encrypted in transit. An eavesdropper sees
+  metadata only: addresses, timing, byte counts.
+- **The server cannot be impersonated.** The kubeconfig carries the cluster's CA certificate
+  (`certificate_authority.data`) and `kubectl` verifies the endpoint against it, so a
+  man-in-the-middle cannot harvest the token.
+- **The endpoint is discoverable and probeable.** Anyone can resolve the hostname, connect on
+  443, and see an EKS API server answering. They can send requests indefinitely.
+- **Every one of those requests fails.** Each must carry a bearer token that is a signed AWS STS
+  request verified against IAM; EKS binds nothing to `system:anonymous`, so there is no
+  unauthenticated read path; and valid AWS credentials still get nothing without a matching
+  access entry.
+
+So *reachable* is accurate and *accessible* is not. This is stated because the rest of this
+section can read as though nothing is exposed inbound at all — a claim true only of the
+**workload**, which is reached solely through `port-forward`.
+
+Restricting the CIDR list would add no encryption; there is already encryption. It would make the
+endpoint invisible to anyone not coming from a listed address, which matters only where
+authentication itself fails: an API-server vulnerability, or a stolen credential used from an
+unexpected location. Worth having, but it collides with decision 7 — a residential IP is not
+static, so the list needs editing mid-session, and that is exactly the pressure that produces
+`0.0.0.0/0` in the first place. Left open deliberately, not by oversight.
+
 **The node's public IP is for outbound only** — pulling the image from ECR and letting the app call
 the Groq API. Nothing ever connects inward. It is auto-assigned from an AWS pool at launch and
 released on termination, so **every recreate yields a different address**, as does any node
@@ -437,10 +465,25 @@ Two statements deserve attention:
   in a code comment** so it reads as a known limit rather than an oversight.
 
 **Honest exposure assessment.** The most useful review lens is not "is each action needed" but
-*what is the worst thing this role could do if someone else obtained it?* The answer: **delete VPCs
-and security groups anywhere in us-west-2**. Everything else is read-only, scoped to
-`platform-lab`, or condition-locked. That exposure comes entirely from `EC2Networking`, which is
-why the boundary's region lock matters.
+*what is the worst thing this role could do if someone else obtained it?* Two answers, not one:
+
+1. **Delete VPCs and security groups anywhere in us-west-2.** This comes entirely from
+   `EC2Networking`, which is why the boundary's region lock matters.
+2. **Grant itself cluster-admin on `platform-lab`.** `EKSWrite` includes `eks:CreateAccessEntry`
+   and `eks:AssociateAccessPolicy`, so the deployer can create an access entry naming itself and
+   attach `AmazonEKSClusterAdminPolicy` — then run `kubectl` as cluster-admin.
+
+The second is **inherent, not an oversight.** Terraform needs both actions to create the
+`hagop-admin` access entry during `apply`; removing them means the cluster comes up with no
+`kubectl` access at all. Whoever can apply this stack can grant cluster access — that is what
+applying it *means*.
+
+What this changes is the wording of the claim. "The deployer cannot talk to the cluster" is
+false as a security boundary; it is true only as a statement of configuration. The accurate
+version: **the deployer is granted no cluster access, taking it requires an extra deliberate API
+call, and that call is recorded in CloudTrail.** Detection, not prevention.
+
+Everything else in the policy is read-only, scoped to `platform-lab`, or condition-locked.
 
 ### 7d. Reactive tightening
 
