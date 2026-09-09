@@ -14,8 +14,9 @@ small — the focus is on the engineering around it: supply-chain-hardened CI
 (SHA-pinned actions, `pip-audit`, ruff security rules), non-root containers,
 hermetic tests that never touch the network, AI-assisted development run inside
 a [default-deny-firewalled dev container](docs/devcontainer-spec.md), and design
-docs that record the tradeoffs and gotchas actually hit along the way. Roadmap
-below covers the Terraform, Kubernetes, and CI/CD layers being added on top.
+docs that record the tradeoffs and gotchas actually hit along the way. The same
+service also runs on a Terraform-provisioned EKS cluster, deployed under a
+least-privilege IAM role verified by a full create-and-destroy cycle.
 
 ---
 
@@ -29,6 +30,9 @@ below covers the Terraform, Kubernetes, and CI/CD layers being added on top.
 | RAG over U.S. tangible-property tax regulations | [`rag/`](rag/) | Chunks committed eCFR XML + IRS FAQ into ChromaDB, retrieves, builds a grounded prompt |
 | Pluggable LLM provider | [`llm_providers.py`](llm_providers.py) | `groq` (default) or `anthropic`, selected by `LLM_PROVIDER`; model per provider via `GROQ_MODEL`/`ANTHROPIC_MODEL`; SDKs imported lazily |
 | Sandboxed dev container | [`.devcontainer/`](.devcontainer/) | Default-deny network firewall for unattended agentic work — see [design notes](docs/devcontainer-spec.md) |
+| EKS cluster as code | [`terraform/`](terraform/) | Split by lifetime: `bootstrap/` holds permanent identity and ECR, `eks/` holds everything billable and is destroyed after every session |
+| Least-privilege deploy role | [`terraform/bootstrap/iam.tf`](terraform/bootstrap/iam.tf), [`boundary.tf`](terraform/bootstrap/boundary.tf) | Hand-written policy plus a permissions boundary, then narrowed from CloudTrail evidence and proven by a full apply → verify → destroy cycle as the deploy role |
+| Kubernetes manifests | [`k8s/`](k8s/) | App + Prometheus, no PVCs or LoadBalancers — everything billable stays in Terraform's state so `destroy` reaches it |
 
 The [`rag/ingest.py`](rag/ingest.py) chunker is the most involved piece: it parses
 authoritative eCFR XML — fetched by [`rag/fetch_sources.py`](rag/fetch_sources.py)
@@ -69,6 +73,15 @@ is written up inline and in [`docs/tpr_rag_spec.md`](docs/tpr_rag_spec.md).
 
    Grafana (:3000) reads Prometheus for dashboards.
 ```
+
+**On EKS the same topology runs unchanged**, because Kubernetes Service DNS matches
+Compose service DNS: `prometheus.yml` still scrapes `app:9464`, and
+[`metrics_analysis.py`](metrics_analysis.py) still resolves `http://prometheus:9090`.
+Two differences worth knowing: **Grafana is not deployed there** — it adds no new
+telemetry story and a click-built dashboard dies with the cluster — and nothing is
+exposed publicly, so access is `kubectl port-forward` rather than a LoadBalancer. See
+the [design spec](docs/superpowers/specs/2026-08-14-eks-cluster-design.md) for why
+both are deliberate.
 
 ## Quickstart
 
@@ -158,7 +171,10 @@ it reflects the actual regulation text.
 | Typecheck | `uv run pyright` |
 | Test | `uv run pytest` |
 
-Pre-commit runs ruff, pyright, and pytest; CI runs the same on every push. Tests
+Pre-commit runs ruff, ruff-format, pyright and pytest. CI runs those plus
+`pip-audit`, `terraform fmt -check`, `terraform validate` on both stacks, and
+`kubeconform -strict` over [`k8s/`](k8s/) — the infra checks need no cloud
+credentials, so every push validates the Terraform and manifests offline. Tests
 never make network or live-LLM calls — dependencies are stubbed (see
 [`CLAUDE.md`](CLAUDE.md) → *Testing conventions*).
 
@@ -168,6 +184,9 @@ Longer-form design docs live in [`docs/`](docs/):
 
 - [`tpr_rag_spec.md`](docs/tpr_rag_spec.md) — the RAG feature, chunking strategy, and the eCFR XML parsing rules
 - [`devcontainer-spec.md`](docs/devcontainer-spec.md) — the sandboxed dev container and firewall
+- [`2026-08-14-eks-cluster-design.md`](docs/superpowers/specs/2026-08-14-eks-cluster-design.md) — the EKS design: cost-driven teardown discipline, the permissions boundary, and an honest exposure assessment of what the deploy role could do
+- [`2026-08-14-eks-cluster.md`](docs/superpowers/plans/2026-08-14-eks-cluster.md) — the 14-task execution plan, with each place reality contradicted it recorded in line
+- [`guides/rag-embeddings-primer.md`](docs/guides/rag-embeddings-primer.md) — a standalone primer on how embeddings and vector search actually work, with measured latency numbers from this repo's retrieval path
 
 ## How this was built
 
@@ -193,12 +212,27 @@ Those two documents are point-in-time records and are deliberately **not** updat
 the fact. The design spec estimated 500–700 chunks; the shipped index has 467. Keeping
 the estimate visible next to the outcome is more useful than quietly correcting it.
 
+The EKS work is the larger example, and the one where the gap between plan and reality
+was widest:
+
+- [design spec](docs/superpowers/specs/2026-08-14-eks-cluster-design.md) — eight decisions, a permissions boundary written from intent, and an exposure assessment that asks what the deploy role could do if someone else obtained it
+- [implementation plan](docs/superpowers/plans/2026-08-14-eks-cluster.md) — 14 tasks, the last three run against live AWS
+
+Ten of its steps carry a **"Corrected during execution"** note where reality contradicted
+the plan, left in place rather than rewritten: a manifest-validation gate that turned out
+to need a live cluster, credentials that expired mid-`destroy` and left a cluster running,
+a `docker build` whose default provenance attestation quietly reduced ECR retention to one
+image, and a deploy step that would have committed an account ID the design forbids. The
+deploy role needed one permission it was never granted — discovered fifteen minutes into a
+run, under least privilege only — and was then narrowed using CloudTrail evidence, which
+removed nine actions and wrongly removed three more that a failed apply put straight back.
+
 ## Roadmap
 
 - [x] Terraform to provision the stack (`terraform/bootstrap/`, `terraform/eks/`)
 - [x] Kubernetes manifests (`k8s/`)
-- [ ] Grafana dashboards as code (provisioned, not click-configured)
-- [ ] Ship traces to an OTel Collector instead of console
+- [ ] CI/CD deploy to EKS via the existing GitHub OIDC role
+- [ ] Ship traces to an OTel Collector and a trace backend — metrics have a full path today, traces go to the console and vanish
 
 ## License
 
