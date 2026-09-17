@@ -47,34 +47,136 @@ is written up inline and in [`docs/tpr_rag_spec.md`](docs/tpr_rag_spec.md).
 
 ## Architecture
 
-```
-                 ┌────────────────────────┐
-   HTTP  ───────▶│   FastAPI (main.py)    │
-                 │   OpenTelemetry SDK     │
-                 └──────┬──────────┬───────┘
-             traces →   │          │  metrics (:9464, Prometheus format)
-             console    │          │
-                        │          ▼
-                        │   ┌─────────────┐   scrape    ┌───────────┐
-                        │   │ Prometheus  │◀────────────│  (5s)     │
-                        │   └──────┬──────┘             └───────────┘
-                        │          │ query_range
-                        ▼          ▼
-              ┌───────────────────────────┐        ┌───────────┐
-              │ /api/v1/analyze            │───────▶│    LLM    │
-              │  format series → prompt    │        │ (groq /   │
-              └───────────────────────────┘        │ anthropic)│
-                                                    └────▲──────┘
-   RAG track:                                            │
-   ┌───────────────┐  embed + retrieve  ┌──────────┐     │
-   │ /repair-tax-  │───────────────────▶│ ChromaDB │     │
-   │  impact       │   grounded prompt  └──────────┘     │
-   └───────────────┴──────────────────────────────────────┘
+One FastAPI process, three stories: the telemetry plumbing that carries metrics and
+traces out of it, and two LLM features that differ only in where they get their
+grounding context.
 
-   Grafana (:3000) reads Prometheus for dashboards.
+### A — Telemetry pipeline (pull model)
+
+Nothing is pushed. The app passively serves its current metric state; Prometheus
+decides when to read it.
+
+```
+┌───────────────────────────── app container ─────────────────────────────┐
+│                                                                         │
+│  FastAPI :8000                         OTel SDK (same process)          │
+│  ┌────────────────────┐                ┌──────────────────────────────┐ │
+│  │ /work              │─ .record() ───▶│ MeterProvider                │ │
+│  │                    │─ .add()    ───▶│   app_work_duration_seconds  │ │
+│  │ all routes, via    │                │   app_requests_total         │ │
+│  │ FastAPIInstrumentor│─ spans ───────▶│ TracerProvider               │ │
+│  └────────────────────┘                └──────┬───────────────┬───────┘ │
+│                                               │               │         │
+│                        BatchSpanProcessor ────┘               │ live    │
+│                        → ConsoleSpanExporter                  │ read    │
+│                                  │                            │         │
+│                                  ▼                    ┌───────▼───────┐ │
+│                          container stdout             │ prometheus_   │ │
+│                       (docker compose logs app)       │ client WSGI   │ │
+│                                                       │ srv :9464     │ │
+│                                                       └───────▲───────┘ │
+└───────────────────────────────────────────────────────────────┼─────────┘
+                                                                │
+                                   GET app:9464/metrics every 5s│
+                                   (Prometheus initiates)       │
+                                        ┌───────────────────────┴───────┐
+                                        │ prometheus container :9090    │
+                                        │ TSDB — no volume mounted,     │
+                                        │ so history dies with the      │
+                                        │ container                     │
+                                        └───────────────▲───────────────┘
+                                                        │ PromQL
+                                        ┌───────────────┴───────────────┐
+                                        │ grafana container :3000       │
+                                        │ (datasource added by hand)    │
+                                        └───────────────────────────────┘
 ```
 
-**On EKS the same topology runs unchanged**, because Kubernetes Service DNS matches
+`start_http_server(port=9464)` in [`main.py`](main.py) runs a second HTTP server, on
+its own thread, in the same process as uvicorn — it is not a FastAPI route. It serves
+whatever collectors are registered in `prometheus_client`'s global registry, which is
+where `PrometheusMetricReader` quietly registers itself on construction.
+
+### B — Metric analysis: grounding in a time-series DB
+
+Note the role reversal against A. Here the app is the client and Prometheus answers.
+
+```
+┌───────────────────────── app container ────────────────────────┐
+│  FastAPI :8000                                                 │
+│  ┌──────────────────┐                                          │
+│  │ /api/v1/analyze  │  ← end user: GET ?query=up&minutes=15     │
+│  └────────┬─────────┘                                          │
+│           │ metrics_analysis.analyze_metrics()                 │
+│           │                                                    │
+│           │ 1. httpx GET prometheus:9090/api/v1/query_range ───┼──▶ Prometheus
+│           │    ◀────────────────────── JSON time series ───────┼───
+│           │ 2. format_metrics_for_llm() → compact text         │
+│           │ 3. llm_providers.complete(prompt) ─────────────────┼──▶ Groq /
+│           │    ◀────────────────────── analysis text ──────────┼─── Anthropic
+│           ▼                                                    │
+│      {"analysis": "..."}                                       │
+└────────────────────────────────────────────────────────────────┘
+```
+
+Hitting this route does **not** trigger a scrape — it reads what Prometheus already
+stored. On a freshly started stack, generate traffic (`/work`) first or the window is
+empty. Both outbound calls above emit spans of their own, via
+`HTTPXClientInstrumentor` in [`main.py`](main.py), so they show up in A's trace output.
+
+### C — RAG: grounding in a vector store
+
+Same shape as B, different context source — but split across three phases that happen
+at three different times. The `═══` lines are where the artifact changes form.
+
+```
+ PHASE 1 — human-run, occasional, NETWORK
+ ┌──────────────────────┐   eCFR versioner API (XML)
+ │ rag/fetch_sources.py │◀── IRS FAQ (HTML)
+ └──────────┬───────────┘
+            │ writes verbatim + sha256
+            ▼
+   docs/tpr-sources/  +  _manifest.json      ← committed to git
+            │                    ▲
+            │                    └── tests/test_manifest.py re-checks hashes
+            │
+ ═══════════╪══════════════════════════════════════════════════
+ PHASE 2 — docker build, OFFLINE except HF Hub
+            │
+            ▼
+ ┌──────────────────────┐        ┌───────────────────────────┐
+ │ rag/ingest.py        │        │ SentenceTransformer        │
+ │  parse XML + HTML    │───────▶│ all-MiniLM-L6-v2           │
+ │  chunk               │        │ (downloaded at build)      │
+ │  embed               │        └───────────────────────────┘
+ └──────────┬───────────┘
+            │
+            ▼
+   ChromaDB index @ /home/appuser/.tpr-rag/chroma_data
+   ── baked INTO the image, no bind mount ──
+            │
+ ═══════════╪══════════════════════════════════════════════════
+ PHASE 3 — runtime, per request, OFFLINE except the LLM
+            │
+  POST /api/v1/repair-tax-impact                    ┌──────────┐
+            │                                       │ Groq /   │
+            ▼                                       │ Anthropic│
+   embed question ─▶ retrieve top-k ─▶ grounded ───▶│          │
+   (same model,      (from the index    prompt      └────┬─────┘
+    now local)        above)                             │
+                                                         ▼
+                                      {"answer": ..., "sources": [...]}
+```
+
+Phase 1 is the only network-touching step, and once run it changes retrieval results
+with no human in the loop — which is what
+[`tests/test_manifest.py`](tests/test_manifest.py) guards against.
+`/api/v1/repair-tax-impact-no-rag` skips phases 1–3 entirely and sends the bare
+question to the LLM, for comparison.
+
+### The same topology on EKS
+
+**All three run unchanged on EKS**, because Kubernetes Service DNS matches
 Compose service DNS: `prometheus.yml` still scrapes `app:9464`, and
 [`metrics_analysis.py`](metrics_analysis.py) still resolves `http://prometheus:9090`.
 Two differences worth knowing: **Grafana is not deployed there** — it adds no new
