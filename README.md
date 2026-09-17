@@ -289,15 +289,30 @@ the no-RAG endpoint sends the same question straight to the LLM.
 ```bash
 curl -s localhost:8000/api/v1/repair-tax-impact \
   -H 'content-type: application/json' \
-  -d '{"description": "I replaced the entire roof on a rental property."}' | jq
+  -d '{"description": "I replaced the garage door on a rental property. Can I deduct it this year?"}' \
+  | jq -r '.answer'
 ```
 
-```json
-{
-  "answer": "1. Classification: Capitalize\n2. Safe harbor or BAR-test category: ... the replacement of the entire roof would be considered a restoration of a major component and a substantial structural part of the building under paragraphs (k)(1)(vi) and (k)(2) of section 1.263(a)-3\n3. Specific section(s) cited: 1.263(a)-3(k), specifically paragraphs (e)(2)(ii), (k)(1)(vi), (k)(2), and (k)(6)(ii)(A) and (B)...",
-  "sources": ["1.263(a)-3(k)"]
-}
 ```
+1. Classification: Capitalize
+2. Safe harbor or BAR-test category: ... the replacement of the entire roof would be
+   considered a restoration of a major component and a substantial structural part of
+   the building under paragraphs (k)(1)(vi) and (k)(2) of section 1.263(a)-3
+3. Specific section(s) cited: 1.263(a)-3(k), specifically paragraphs (e)(2)(ii),
+   (k)(1)(vi), (k)(2), and (k)(6)(ii)(A) and (B)...
+```
+
+The same question without RAG:
+
+```bash
+curl -s localhost:8000/api/v1/repair-tax-impact-no-rag \
+  -H 'content-type: application/json' \
+  -d '{"description": "I replaced the garage door on a rental property. Can I deduct it this year?"}' \
+  | jq -r '.answer'
+```
+
+`jq -r '.answer'` renders the markdown; drop the `-r '.answer'` to see the full JSON
+including `sources` (`["1.263(a)-3(k)"]` with RAG, `[]` without).
 
 The `sources` array is the tell: grounded answers cite specific CFR subsections;
 the `-no-rag` variant returns a confident answer with no citations and no guarantee
