@@ -25,7 +25,7 @@ COPY --chown=appuser:appuser pyproject.toml uv.lock ./
 ARG WITH_ANTHROPIC=false
 RUN uv sync --frozen --no-install-project $(if [ "$WITH_ANTHROPIC" = "true" ]; then echo --extra anthropic; fi)
 
-COPY --chown=appuser:appuser main.py metrics_analysis.py llm_providers.py ./
+COPY --chown=appuser:appuser main.py metrics_analysis.py llm_providers.py mcp_server.py ./
 COPY --chown=appuser:appuser rag/ ./rag/
 
 # Bake the embedding model into the image at build time, so container

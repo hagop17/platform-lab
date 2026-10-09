@@ -21,6 +21,22 @@ services:
       - ANTHROPIC_MODEL
       - TPR_RAG_DATA_DIR=/home/appuser/.tpr-rag/chroma_data
 
+  # MCP server over the app's Prometheus metrics, as its own process. Same
+  # image as `app` (so `build:` matches it and Compose reuses the layers),
+  # different entrypoint. Needs Prometheus, not the app.
+  mcp:
+    build:
+      context: .
+      args:
+        WITH_ANTHROPIC: ${WITH_ANTHROPIC:-false}
+    command: ["uv", "run", "python", "-m", "mcp_server"]
+    ports:
+      - "8001:8001"   # MCP streamable HTTP at /mcp
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+    depends_on:
+      - prometheus
+
   prometheus:
     image: prom/prometheus:latest
     volumes:

@@ -1,10 +1,10 @@
 """
 MCP server exposing this service's own Prometheus metrics as tools.
 
-Mounted into the FastAPI app in `main.py` rather than run as a separate
-process — MCP's streamable-HTTP transport is just an ASGI app, so it can
-live inside the app whose metrics it reads. That means the tools call
-`metrics_analysis` directly instead of going back out over HTTP.
+Runs as its own process (`python -m mcp_server`, the `mcp` service in
+docker-compose.yml) on port 8001, serving streamable HTTP at /mcp. It shares
+the app's image and imports `metrics_analysis` directly, but needs nothing
+from the FastAPI app itself — only Prometheus, via PROMETHEUS_URL.
 
 Deliberately *no* LLM call anywhere in this module. `/api/v1/analyze`
 asks an LLM one fixed question about one fixed window; here the model is
@@ -12,13 +12,8 @@ the client, so the tools only fetch and format, and Claude decides what
 to query, when to query again, and what it means.
 """
 
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-
-import anyio
 import httpx
-from fastapi import FastAPI
-from mcp_use import MCPServer
+from mcp.server.mcpserver import MCPServer
 
 from metrics_analysis import format_metrics_for_llm, list_metric_names, query_prometheus
 
@@ -93,20 +88,8 @@ def query_metrics(promql: str, minutes: int = 30) -> str:
     return format_metrics_for_llm(raw)
 
 
-@asynccontextmanager
-async def mcp_lifespan(_app: FastAPI) -> AsyncGenerator[None]:
-    """Start the MCP session manager alongside the host application.
-
-    Starlette runs the lifespan of the top-level app only — a mounted sub-app
-    never receives startup or shutdown. `mcp.app` would normally create this
-    task group in its own lifespan, so mounting it silently skips that step:
-    tools/list still answers, but anything that streams has no task group to
-    run in. Creating it here and handing it over is mcp-use's documented
-    workaround for the mount case.
-
-    `_task_group` is private, so pin the mcp-use version — a rename would
-    surface as streaming failures rather than an ImportError.
-    """
-    async with anyio.create_task_group() as tg:
-        mcp.session_manager._task_group = tg  # noqa: SLF001 — see docstring
-        yield
+if __name__ == "__main__":
+    # 0.0.0.0 so Docker's port mapping can reach it. Binding to a non-loopback
+    # address also means the SDK installs no Host-header allowlist, which is
+    # only auto-enabled for 127.0.0.1/localhost binds.
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=8001)  # noqa: S104
