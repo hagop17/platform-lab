@@ -7,8 +7,6 @@ Metrics -> Prometheus format, scraped on port 9464
 import logging
 import random
 import time
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -27,7 +25,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from prometheus_client import start_http_server
 
-from mcp_server import mcp, mcp_lifespan
 from metrics_analysis import analyze_metrics
 from rag.router import router as rag_router
 
@@ -58,16 +55,7 @@ work_duration = meter.create_histogram(
 )
 
 # --- 3. Create the app and auto-instrument it ---
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    """The app's startup/shutdown slot. Nest further concerns here as they arrive."""
-    async with mcp_lifespan(app):
-        yield
-
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 FastAPIInstrumentor.instrument_app(app)
 
 # Outbound HTTP spans. FastAPIInstrumentor only covers requests coming *in*;
@@ -77,11 +65,6 @@ FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()
 
 app.include_router(rag_router)
-
-# The MCP server is an ASGI app in its own right, so it mounts rather than
-# merging into the route table. Endpoint lands at /agent/mcp — MCPServer
-# serves itself at /mcp under whatever prefix it is given.
-app.mount("/agent", mcp.app)
 
 
 @app.get("/health")

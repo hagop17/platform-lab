@@ -17,7 +17,8 @@ If a task requires reaching a domain not in the allowlist, or requires pushing t
 
 - **Package manager:** `uv` — do not use `pip` or `poetry` directly for dependency management.
 - **Run dev server:** `uv run fastapi dev main.py`
-- **Run full stack (app + Prometheus + Grafana):** `docker compose up -d --build`
+- **Run full stack (app + MCP server + Prometheus + Grafana):** `docker compose up -d --build`
+- **Run MCP server (local):** `PROMETHEUS_URL=http://localhost:9090 uv run python -m mcp_server` — its own process, streamable HTTP at `http://localhost:8001/mcp`. In Compose it's the `mcp` service: same image as `app`, `command:` overridden (the `Dockerfile` `CMD` stays the FastAPI app).
 - **Lint:** `uv run ruff check .`
 - **Format:** `uv run ruff format .`
 - **Typecheck:** `uv run pyright` (runs on the full project, no filenames passed)
@@ -38,6 +39,7 @@ Flat layout, no `src/`/`app/` package — top-level modules plus a `rag/` packag
 
 - **`main.py`** — FastAPI app entrypoint. Wires up OpenTelemetry (traces to console via `ConsoleSpanExporter`, metrics to Prometheus pull-model via `PrometheusMetricReader` on port `9464`), mounts `rag_router`, then defines routes (`/` route index, `/health`, `/work`, `/api/v1/analyze`).
 - **`metrics_analysis.py`** — implements `/api/v1/analyze`: queries Prometheus's `query_range` API for a metric window, formats the time series into compact text, then calls `llm_providers.complete()` for anomaly/trend analysis.
+- **`mcp_server.py`** — MCP server (official `mcp` SDK v2, `mcp.server.mcpserver.MCPServer`) exposing `list_metrics` / `query_metrics` tools over the same Prometheus data. Runs as a **separate process** on port `8001` (`/mcp`), not mounted in the FastAPI app — it imports `metrics_analysis` directly and needs only Prometheus, not `main.py`. No LLM call: the MCP client is the model. Binds `0.0.0.0`, so the SDK installs no Host-header allowlist (that's only auto-enabled for loopback binds). Serves both the pre-2026 `initialize` handshake and stateless 2026-07-28 requests (no session ID); the SDK routes the latter automatically.
 - **`llm_providers.py`** — the shared LLM dispatch layer (see below). Used by both `metrics_analysis.py` and `rag/`.
 - **`rag/`** — tangible-property-regulations RAG demo. `rag/fetch_sources.py` is the only network-touching module: it pulls CFR sections (eCFR versioner API XML) and the IRS FAQ (HTML) and writes them, verbatim, to the committed `docs/tpr-sources/` snapshot with a sha256 manifest. `rag/ingest.py` parses that snapshot fully offline (stdlib `xml.etree.ElementTree` for the CFR XML, BeautifulSoup for the IRS FAQ), chunks it, and builds a persistent ChromaDB collection; `rag/tpr_rag.py` embeds a question, retrieves matching chunks, and builds the grounded prompt; `rag/router.py` exposes `/api/v1/repair-tax-impact` (RAG-grounded) and `/api/v1/repair-tax-impact-no-rag` (same question sent straight to the LLM, for comparison).
 
