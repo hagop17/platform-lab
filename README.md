@@ -27,6 +27,7 @@ least-privilege IAM role verified by a full create-and-destroy cycle.
 | OpenTelemetry auto- + manual instrumentation | [`main.py`](main.py) | Traces → console, metrics → Prometheus pull endpoint on `:9464` |
 | Prometheus + Grafana stack | [`docker-compose.yml`](docker-compose.yml), [`prometheus.yml`](prometheus.yml) | Scrapes the app every 5s |
 | LLM-assisted metrics analysis | [`metrics_analysis.py`](metrics_analysis.py) | Queries Prometheus `query_range`, formats the series, asks an LLM for anomalies |
+| MCP server over the same metrics | [`mcp_server.py`](mcp_server.py) | `list_metrics` / `query_metrics` tools on `:8001/mcp`, its own process; official MCP SDK v2, localhost-only |
 | RAG over U.S. tangible-property tax regulations | [`rag/`](rag/) | Chunks committed eCFR XML + IRS FAQ into ChromaDB, retrieves, builds a grounded prompt |
 | Pluggable LLM provider | [`llm_providers.py`](llm_providers.py) | `groq` (default) or `anthropic`, selected by `LLM_PROVIDER`; model per provider via `GROQ_MODEL`/`ANTHROPIC_MODEL`; SDKs imported lazily |
 | Sandboxed dev container | [`.devcontainer/`](.devcontainer/) | Default-deny network firewall for unattended agentic work — see [design notes](docs/devcontainer-spec.md) |
@@ -49,7 +50,8 @@ is written up inline and in [`docs/tpr_rag_spec.md`](docs/tpr_rag_spec.md).
 
 One FastAPI process, three stories: the telemetry plumbing that carries metrics and
 traces out of it, and two LLM features that differ only in where they get their
-grounding context.
+grounding context. A fourth, separate process puts the same metrics in front of an
+LLM the other way round: as tools the model calls itself.
 
 ### A — Telemetry pipeline (pull model)
 
@@ -174,14 +176,44 @@ with no human in the loop — which is what
 `/api/v1/repair-tax-impact-no-rag` skips phases 1–3 entirely and sends the bare
 question to the LLM, for comparison.
 
+### D — MCP: the model as the client
+
+B in reverse. B asks an LLM one fixed question about one fixed window; here an MCP
+client such as Claude Code *is* the LLM, and decides what to query, when to query
+again, and what the answer means. The server only fetches and formats, so it makes
+no LLM call and needs no API key.
+
+```
+┌───────────────────┐  streamable HTTP   ┌─ mcp container (same image as app) ─┐
+│ MCP client        │  POST /mcp         │  python -m mcp_server  :8001        │
+│ (e.g. Claude Code)│───────────────────▶│                                     │
+│                   │                    │  list_metrics  ──▶ /api/v1/label/   │
+│ decides what to   │                    │                    __name__/values ─┼──▶ Prometheus
+│ ask next          │◀───────────────────│  query_metrics ──▶ /api/v1/         │
+│                   │   tool results     │                    query_range ─────┼──▶
+└───────────────────┘   (plain text)     └─────────────────────────────────────┘
+```
+
+It reuses [`metrics_analysis.py`](metrics_analysis.py)'s Prometheus client and
+formatter, and needs only Prometheus, not the FastAPI app. Both protocol styles work:
+the `initialize` handshake with a session ID, and stateless 2026-07-28 requests.
+
+Since its tools are made for an AI to act through, it accepts only local requests.
+The port is published on `127.0.0.1` (as all ports in the Compose stack are), and the
+server checks every request's `Host` and `Origin` headers, rejecting foreign ones with
+421/403. That second check stops a web page in your own browser from reaching it
+through [DNS rebinding](https://en.wikipedia.org/wiki/DNS_rebinding), which a
+localhost-only port alone does not.
+
 ### The same topology on EKS
 
-**All three run unchanged on EKS**, because Kubernetes Service DNS matches
+**A, B and C run unchanged on EKS**, because Kubernetes Service DNS matches
 Compose service DNS: `prometheus.yml` still scrapes `app:9464`, and
 [`metrics_analysis.py`](metrics_analysis.py) still resolves `http://prometheus:9090`.
-Two differences worth knowing: **Grafana is not deployed there** — it adds no new
-telemetry story and a click-built dashboard dies with the cluster — and nothing is
-exposed publicly, so access is `kubectl port-forward` rather than a LoadBalancer. See
+Three differences worth knowing: **Grafana is not deployed there** — it adds no new
+telemetry story and a click-built dashboard dies with the cluster — **neither is the
+MCP server (D)**, which has no manifest yet, and nothing is exposed publicly, so
+access is `kubectl port-forward` rather than a LoadBalancer. See
 the [design spec](docs/superpowers/specs/2026-08-14-eks-cluster-design.md) for why
 both are deliberate.
 
@@ -193,7 +225,7 @@ Requires Docker and a [Groq API key](https://console.groq.com) (free tier is eno
 # 1. Configure secrets
 cp .env.example .env        # then edit: set GROQ_API_KEY=...
 
-# 2. Bring up app + Prometheus + Grafana
+# 2. Bring up app + MCP server + Prometheus + Grafana
 docker compose up -d --build
 
 # 3. Generate some telemetry (the analyze route reads stored data — it
@@ -206,12 +238,19 @@ curl -s "localhost:8000/api/v1/analyze?query=app_requests_total&minutes=15" | jq
 - App: <http://localhost:8000> (route index at `/`, OpenAPI UI at `/docs`)
 - Prometheus: <http://localhost:9090>
 - Grafana: <http://localhost:3000> (`admin` / `admin` — local demo only)
+- MCP server: `http://localhost:8001/mcp`. Connect Claude Code with
+  `claude mcp add --transport http platform-lab http://localhost:8001/mcp`, then ask it
+  something like "is the platform-lab service healthy?"
+
+Every port is published on `127.0.0.1` only. To reach the stack from another machine,
+use an SSH tunnel rather than widening the binding.
 
 ### Local dev (no Docker)
 
 ```bash
 uv sync
 PROMETHEUS_URL=http://localhost:9090 uv run fastapi dev main.py
+PROMETHEUS_URL=http://localhost:9090 uv run python -m mcp_server   # MCP, :8001/mcp
 ```
 
 `PROMETHEUS_URL` defaults to the compose-internal hostname `http://prometheus:9090`;
