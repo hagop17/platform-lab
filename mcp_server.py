@@ -14,6 +14,7 @@ to query, when to query again, and what it means.
 
 import httpx
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 from metrics_analysis import format_metrics_for_llm, list_metric_names, query_prometheus
 
@@ -88,8 +89,20 @@ def query_metrics(promql: str, minutes: int = 30) -> str:
     return format_metrics_for_llm(raw)
 
 
+# DNS-rebinding protection: reject requests whose Host or Origin isn't this
+# machine (421 / 403). These are the SDK's own values, which it installs on its
+# own only for loopback binds; we bind 0.0.0.0 below, so they're set explicitly.
+_LOCAL_ONLY = TransportSecuritySettings(
+    allowed_hosts=["localhost:*", "127.0.0.1:*", "[::1]:*"],
+    allowed_origins=["http://localhost:*", "http://127.0.0.1:*", "http://[::1]:*"],
+)
+
 if __name__ == "__main__":
-    # 0.0.0.0 so Docker's port mapping can reach it. Binding to a non-loopback
-    # address also means the SDK installs no Host-header allowlist, which is
-    # only auto-enabled for 127.0.0.1/localhost binds.
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8001)  # noqa: S104
+    # 0.0.0.0 so Docker's port mapping can reach it; _LOCAL_ONLY restores the
+    # Host/Origin check a loopback bind would have had.
+    mcp.run(
+        transport="streamable-http",
+        host="0.0.0.0",  # noqa: S104
+        port=8001,
+        transport_security=_LOCAL_ONLY,
+    )
