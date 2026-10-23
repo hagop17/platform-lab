@@ -8,8 +8,10 @@ services:
       args:
         WITH_ANTHROPIC: ${WITH_ANTHROPIC:-false}
     ports:
-      - "8000:8000"   # FastAPI app
-      - "9464:9464"   # OTel Prometheus metrics endpoint
+      # 127.0.0.1: reachable from this machine only, not the LAN. Container-
+      # to-container traffic (app:9464, prometheus:9090) doesn't use these.
+      - "127.0.0.1:8000:8000"   # FastAPI app
+      - "127.0.0.1:9464:9464"   # OTel Prometheus metrics endpoint
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
@@ -31,7 +33,7 @@ services:
         WITH_ANTHROPIC: ${WITH_ANTHROPIC:-false}
     command: ["uv", "run", "python", "-m", "mcp_server"]
     ports:
-      - "8001:8001"   # MCP streamable HTTP at /mcp
+      - "127.0.0.1:8001:8001"   # MCP streamable HTTP at /mcp
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
     depends_on:
@@ -42,13 +44,14 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:Z
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
 
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
-      # Local demo only — this stack binds to localhost and ships no real data.
+      # Local demo only: every port is published on 127.0.0.1 and the stack
+      # ships no real data.
       # Do not reuse this compose file as-is for anything internet-facing.
       - GF_SECURITY_ADMIN_PASSWORD=admin
